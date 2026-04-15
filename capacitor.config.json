@@ -1,0 +1,8 @@
+{
+  "appId": "com.fixelflow.magicflow",
+  "appName": "Magic Flow",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "file"
+  }
+}
