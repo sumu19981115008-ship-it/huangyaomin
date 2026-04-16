@@ -40,7 +40,7 @@ const G = {
   GW: 20, GH: 20, CELL: 18,
   CW: 360, CH: 360,
   CANVAS_X: 60,
-  BUFFER_Y: 510, QUEUE_Y: 590,
+  ITEM_BAR_Y: 480, BUFFER_Y: 560, QUEUE_Y: 632,
   // 非正方形网格：四边各自独立长度
   LEN_BOTTOM: 360, LEN_RIGHT: 360, LEN_TOP: 360, LEN_LEFT: 360,
   TOTAL_DIST: 1440,
@@ -222,44 +222,6 @@ const LEVEL_DATA = [
     ]
   },
 
-  // ── Level 7：圣诞树  3色绿棕黄 / 4队列 / 20+10+10色块 / 弹药10+10+10+10 ─────────
-  {
-    boardWidth: 20, boardHeight: 20,
-    entities: [
-      {
-        type: 'PixelBlock', color: '#33AA44',
-        cells: [
-          {x:9,y:13},{x:10,y:13},{x:11,y:13},
-          {x:8,y:12},{x:9,y:12},{x:10,y:12},{x:11,y:12},{x:12,y:12},
-          {x:8,y:11},{x:9,y:11},{x:10,y:11},{x:11,y:11},{x:12,y:11},
-          {x:7,y:10},{x:8,y:10},{x:9,y:10},{x:10,y:10},{x:11,y:10},{x:12,y:10},{x:13,y:10}
-        ]
-      },
-      {
-        type: 'PixelBlock', color: '#884422',
-        cells: [
-          {x:8,y:9},{x:9,y:9},{x:10,y:9},{x:11,y:9},{x:12,y:9},
-          {x:8,y:8},{x:9,y:8},{x:10,y:8},{x:11,y:8},{x:12,y:8}
-        ]
-      },
-      {
-        type: 'PixelBlock', color: '#FFCC00',
-        cells: [
-          {x:9,y:16},{x:10,y:16},{x:11,y:16},
-          {x:9,y:15},{x:10,y:15},{x:11,y:15},
-          {x:9,y:14},{x:10,y:14},{x:11,y:14},
-          {x:10,y:13}
-        ]
-      }
-    ],
-    numberOfLanes: 4,
-    initialTanks: [
-      {color:'#33AA44', ammo:10, lane:0, position:0},
-      {color:'#33AA44', ammo:10, lane:1, position:0},
-      {color:'#884422', ammo:10, lane:2, position:0},
-      {color:'#FFCC00', ammo:10, lane:3, position:0}
-    ]
-  },
 
   // ── Level 9：像素凤凰  5色 / 5队列 / 50×5=250色块 / 每色30+20=50弹  难关 ──────────────────────────────────
   // 青色身躯在中央，洋红双翼夹两侧，金黄尾羽在底部，橙红头冠+火焰边框，紫色外轮廓封边
@@ -3049,6 +3011,7 @@ class GameLogic {
     this.buffer  = [];
     this.pendingBullets = [];
     this.trackCap   = TRACK_CAP;
+    this.bufferCap  = BUFFER_CAP;  // 运行时可变，道具一可增加
     this.state      = 'idle';
     this.failReason = null;
   }
@@ -3059,19 +3022,21 @@ class GameLogic {
     // ── 动态几何计算 ──────────────────────────────────────────
     const bw = data.boardWidth  || 20;
     const bh = data.boardHeight || 20;
-    // CELL：让网格同时适配宽度和高度，下方 UI 区域留 180px
-    const cellByW = Math.floor((VW - 40) / bw);          // 两侧各留 20px
-    const cellByH = Math.floor((VH - CANVAS_Y - 180) / bh); // 底部 UI 留 180px
+    // 底部 UI 布局（从轨道底边往下）：
+    //   18 + 道具栏(56) + 74 + 暂存标签(40) + 暂存区(44) + 68 + 队列标签(24) + 队列(158) ≈ 482px
+    const cellByW = Math.floor((VW - 40) / bw);
+    const cellByH = Math.floor((VH - CANVAS_Y - 516) / bh);
     const CELL    = Math.max(CELL_MIN, Math.min(CELL_MAX, cellByW, cellByH));
     const CW      = bw * CELL;
     const CH      = bh * CELL;
-    const CANVAS_X = Math.floor((VW - CW) / 2);
-    const BUFFER_Y = CANVAS_Y + CH + 30;
-    const QUEUE_Y  = BUFFER_Y + 72;
+    const CANVAS_X  = Math.floor((VW - CW) / 2);
+    const ITEM_BAR_Y = CANVAS_Y + CH + TRACK_GAP + 52;   // 轨道底边下方 52px（圆半径26 + 间隙26）
+    const BUFFER_Y   = ITEM_BAR_Y + 130;                  // 道具栏文字底部(+56) + 间隙 74px
+    const QUEUE_Y    = BUFFER_Y + 90;                     // 暂存区底部(+22) + 间隙 68px
     const LEN_BOTTOM = CW, LEN_RIGHT = CH, LEN_TOP = CW, LEN_LEFT = CH;
     const TOTAL_DIST = LEN_BOTTOM + LEN_RIGHT + LEN_TOP + LEN_LEFT;
     Object.assign(G, { GW: bw, GH: bh, CELL, CW, CH, CANVAS_X,
-                       BUFFER_Y, QUEUE_Y,
+                       ITEM_BAR_Y, BUFFER_Y, QUEUE_Y,
                        LEN_BOTTOM, LEN_RIGHT, LEN_TOP, LEN_LEFT, TOTAL_DIST });
     // ────────────────────────────────────────────────────────
 
@@ -3082,6 +3047,7 @@ class GameLogic {
     this.buffer  = [];
     this.pendingBullets = [];
     this.trackCap   = TRACK_CAP;
+    this.bufferCap  = BUFFER_CAP;  // 每关重置
     this.state      = 'playing';
     this.failReason = null;
 
@@ -3287,7 +3253,7 @@ class GameLogic {
     this.turrets.splice(idx, 1);   // 先移除
 
     if (t.ammo > 0) {
-      if (this.buffer.length >= BUFFER_CAP) {
+      if (this.buffer.length >= this.bufferCap) {  // 使用运行时 bufferCap
         this.state      = 'fail';
         this.failReason = 'ON_STAGE_FULL';
         return;
@@ -3354,9 +3320,23 @@ class GameScene extends Phaser.Scene {
     this.txQueueCounts = [];
     // 选关面板
     this.levelSelectOpen  = false;
-    this.levelSelectPanel = null; // Graphics
-    this.levelSelectTexts = [];  // 保留兼容性（虚拟列表中不使用）
+    this.levelSelectPanel = null;
+    this.levelSelectTexts = [];
     this.levelSelectDots  = [];
+    // 道具系统
+    this._itemCounts  = [3, 3, 3];    // 三个道具各3个
+    this._itemGfx     = [];           // 道具图标 Graphics 对象
+    this._itemTxts    = [];           // 道具计数 Text 对象
+    this._activeItem  = -1;           // 当前激活的道具（-1 = 无）
+    // 道具二：选车模式
+    this._item2Paused  = false;
+    this._item2QueueOffsetY = 0;      // 队列区上拉偏移量（用于渲染）
+    // 道具三：选色模式
+    this._item3Active  = false;
+    this._item3CanvasOffsetY = 0;     // 画布下移偏移量（用于渲染）
+    this._item3VignG   = null;        // Vignette 遮罩 Graphics
+    this._item3SpotG   = null;        // 聚光灯 Graphics
+    this._item3WheelG  = null;        // 万能滚轮 Graphics
   }
 
   // —— Phaser 生命周期 ——
@@ -3368,6 +3348,7 @@ class GameScene extends Phaser.Scene {
     this.vBullets = [];
     this.levelIndex = 0;
     this._createTexts();
+    this._createItemBar();
     this._createLevelSelectUI();
     this._loadLevel();
     this.input.on('pointerdown', ptr => this._onClick(ptr.x, ptr.y));
@@ -3376,7 +3357,7 @@ class GameScene extends Phaser.Scene {
   update() {
     if (!this.logic || this.logic.state === 'idle') return;
 
-    if (this.logic.state === 'playing') {
+    if (this.logic.state === 'playing' && !this._item2Paused && !this._item3Active) {
       // 生成视觉子弹
       for (const b of this.logic.flushPendingBullets()) {
         const from = turretScreen(b.fromPathPos);
@@ -3416,10 +3397,10 @@ class GameScene extends Phaser.Scene {
     this.vBullets   = [];
     this._lastState = 'playing';
     this.txLevel.setText(`Level ${this.levelIndex + 1}  /  ${LEVEL_DATA.length}`);
-    // 更新 UI 标签位置（随关卡网格高度变化）
     this.txBufLabel.setPosition(VW / 2, G.BUFFER_Y - 40);
     this.txQueueLabel.setPosition(VW / 2, G.QUEUE_Y - 24);
     this._hideOverlay();
+    this._resetItemState();
   }
 
   // —— 输入 ——
@@ -3454,9 +3435,12 @@ class GameScene extends Phaser.Scene {
     if (state === 'fail') { this._loadLevel(); return; }
     if (state !== 'playing') return;
 
+    // 道具点击
+    if (this._handleItemClick(px, py)) return;
+
     // 暂存区
     const BUFFER_Y = G.BUFFER_Y, QUEUE_Y = G.QUEUE_Y;
-    for (let i = 0; i < BUFFER_CAP; i++) {
+    for (let i = 0; i < this.logic.bufferCap; i++) {
       const sx = this._bufSlotX(i);
       if (Math.abs(px - sx) < 26 && Math.abs(py - BUFFER_Y) < 28) {
         if (this.logic.deployFromBuffer(i)) this._flash(sx, BUFFER_Y);
@@ -3464,12 +3448,13 @@ class GameScene extends Phaser.Scene {
       }
     }
     // 队列
+    const QUEUE_Y_ADJ = QUEUE_Y + (this._item2QueueOffsetY || 0);
     const nl = this.logic.lanes.length;
     const qHW = Math.min(50, (VW - 60) / nl * 0.46); // 点击半宽自适应
     for (let i = 0; i < nl; i++) {
       const cx = this._laneCX(i, nl);
-      if (Math.abs(px - cx) < qHW && py >= QUEUE_Y - 5 && py <= QUEUE_Y + 165) {
-        if (this.logic.deployFromLane(i)) this._flash(cx, QUEUE_Y + 60);
+      if (Math.abs(px - cx) < qHW && py >= QUEUE_Y_ADJ - 5 && py <= QUEUE_Y_ADJ + 165) {
+        if (this.logic.deployFromLane(i)) this._flash(cx, QUEUE_Y_ADJ + 60);
         return;
       }
     }
@@ -3494,26 +3479,29 @@ class GameScene extends Phaser.Scene {
     this._drawBullets(g);
     this._drawBuffer(g);
     this._drawQueues(g);
+    this._drawItemBar(g);
   }
 
   _drawCanvas(g) {
     const { CANVAS_X, CW, CH, GW, GH, CELL } = G;
+    const oy = this._item3CanvasOffsetY || 0;  // 道具三画布偏移
+    const cy0 = CANVAS_Y + oy;
     g.fillStyle(C_CANVAS_BG);
-    g.fillRect(CANVAS_X, CANVAS_Y, CW, CH);
+    g.fillRect(CANVAS_X, cy0, CW, CH);
 
     g.lineStyle(0.5, C_GRID_LINE, 0.55);
     for (let c = 0; c <= GW; c++) {
       const x = CANVAS_X + c * CELL;
-      g.lineBetween(x, CANVAS_Y, x, CANVAS_Y + CH);
+      g.lineBetween(x, cy0, x, cy0 + CH);
     }
     for (let r = 0; r <= GH; r++) {
-      const y = CANVAS_Y + r * CELL;
+      const y = cy0 + r * CELL;
       g.lineBetween(CANVAS_X, y, CANVAS_X + CW, y);
     }
 
     for (const b of this.logic.blocks) {
       const px = CANVAS_X + b.x * CELL + 1;
-      const py = CANVAS_Y + b.y * CELL + 1;
+      const py = cy0 + b.y * CELL + 1;
       const s  = CELL - 2;
       const c  = hexNum(b.color);
       g.fillStyle(c, 1);           g.fillRect(px, py, s, s);
@@ -3524,12 +3512,13 @@ class GameScene extends Phaser.Scene {
     }
 
     g.lineStyle(1.5, 0x3a3a62, 1);
-    g.strokeRect(CANVAS_X, CANVAS_Y, CW, CH);
+    g.strokeRect(CANVAS_X, cy0, CW, CH);
   }
 
   _drawTrack(g) {
     const { CANVAS_X, CW, CH } = G;
-    const tx = CANVAS_X - TRACK_GAP, ty = CANVAS_Y - TRACK_GAP;
+    const oy = this._item3CanvasOffsetY || 0;
+    const tx = CANVAS_X - TRACK_GAP, ty = CANVAS_Y + oy - TRACK_GAP;
     const tw = CW + TRACK_GAP * 2,   th = CH + TRACK_GAP * 2;
     g.lineStyle(4, C_TRACK, 0.9);   g.strokeRect(tx, ty, tw, th);
     g.lineStyle(1, 0x181838, 0.7);  g.strokeRect(tx + 4, ty + 4, tw - 8, th - 8);
@@ -3563,14 +3552,25 @@ class GameScene extends Phaser.Scene {
   }
 
   _drawBuffer(g) {
-    const used  = this.logic.buffer.length;
-    const bgCol = BUFFER_COLORS[Math.min(used, BUFFER_COLORS.length - 1)];
+    const used     = this.logic.buffer.length;
+    const cap      = this.logic.bufferCap;
+    const bgCol    = BUFFER_COLORS[Math.min(used, BUFFER_COLORS.length - 1)];
     const BUFFER_Y = G.BUFFER_Y;
-    for (let i = 0; i < BUFFER_CAP; i++) {
+    for (let i = 0; i < cap; i++) {
       const x = this._bufSlotX(i), y = BUFFER_Y;
       const t = this.logic.buffer[i], hasTurret = i < used;
-      g.fillStyle(hasTurret ? 0x1c1c3a : C_EMPTY_SLOT, 0.9); g.fillRoundedRect(x-22, y-22, 44, 44, 7);
-      g.lineStyle(2, hasTurret ? bgCol : 0x2e2e50, 1);        g.strokeRoundedRect(x-22, y-22, 44, 44, 7);
+      // 扩展槽（超出原始 BUFFER_CAP）用金色边框区分
+      const isExpanded = i >= BUFFER_CAP;
+      g.fillStyle(hasTurret ? 0x1c1c3a : (isExpanded ? 0x1a1a00 : C_EMPTY_SLOT), 0.9);
+      g.fillRoundedRect(x-22, y-22, 44, 44, 7);
+      g.lineStyle(2, hasTurret ? bgCol : (isExpanded ? 0x886600 : 0x2e2e50), 1);
+      g.strokeRoundedRect(x-22, y-22, 44, 44, 7);
+      // 确保文本池足够（扩展槽动态扩充）
+      if (!this.txBufferAmmo[i]) {
+        const s = (sz, col = '#ddddff') => ({ fontSize: `${sz}px`, color: col,
+          fontFamily: 'monospace', stroke: '#000000', strokeThickness: 3 });
+        this.txBufferAmmo[i] = this.add.text(0, 0, '', s(10)).setOrigin(0.5).setVisible(false);
+      }
       const txt = this.txBufferAmmo[i];
       if (hasTurret) {
         g.fillStyle(hexNum(t.color), 1); g.fillCircle(x, y-6, 10);
@@ -3578,10 +3578,12 @@ class GameScene extends Phaser.Scene {
         txt.setPosition(x, y+11).setText(`×${t.ammo}`).setVisible(true);
       } else { txt.setVisible(false); }
     }
+    // 隐藏多余文本（cap 变小时）
+    for (let i = cap; i < this.txBufferAmmo.length; i++) this.txBufferAmmo[i]?.setVisible(false);
   }
 
   _drawQueues(g) {
-    const QUEUE_Y = G.QUEUE_Y;
+    const QUEUE_Y = G.QUEUE_Y + (this._item2QueueOffsetY || 0);
     const nl = this.logic.lanes.length;
     let ii = 0, ci = 0;
     for (let li = 0; li < nl; li++) {
@@ -3639,6 +3641,468 @@ class GameScene extends Phaser.Scene {
     this.txStatus?.setVisible(false);
     this.txContinue?.setVisible(false);
   }
+
+  // ============================================================
+  // —— 道具系统 ——
+  // ============================================================
+
+  // 三个道具的屏幕 X 中心坐标
+  _itemX(i) { return VW / 2 - 80 + i * 80; }
+  _itemBarY() { return G.ITEM_BAR_Y || (G.BUFFER_Y - 80); }
+
+  _createItemBar() {
+    const labels  = ['＋槽', '取车', '清色'];
+    const colors  = [0xffcc00, 0x44ddff, 0xcc44ff];
+    for (let i = 0; i < 3; i++) {
+      const g = this.add.graphics().setDepth(15);
+      this._itemGfx.push(g);
+      const tx = this.add.text(this._itemX(i), 0, `${labels[i]}\n×${this._itemCounts[i]}`,
+        { fontSize: '11px', color: '#ffffff', fontFamily: 'monospace',
+          stroke: '#000000', strokeThickness: 3, align: 'center' })
+        .setOrigin(0.5, 0).setDepth(16);
+      this._itemTxts.push(tx);
+    }
+  }
+
+  _drawItemBar(g) {
+    const y = this._itemBarY();
+    const colors = [0xffcc00, 0x44ddff, 0xcc44ff];
+    const labels  = ['＋槽', '取车', '清色'];
+    for (let i = 0; i < 3; i++) {
+      const ig = this._itemGfx[i];
+      ig.clear();
+      const cx = this._itemX(i), r = 26;
+      const isActive = this._activeItem === i;
+      const hasCount = this._itemCounts[i] > 0;
+      const col = colors[i];
+      // 外圈光晕（激活时）
+      if (isActive) {
+        ig.fillStyle(col, 0.25); ig.fillCircle(cx, y, r + 8);
+        ig.lineStyle(2, col, 0.9); ig.strokeCircle(cx, y, r + 8);
+      }
+      // 主圆
+      ig.fillStyle(hasCount ? 0x111128 : 0x1a1a1a, 1);
+      ig.fillCircle(cx, y, r);
+      ig.lineStyle(isActive ? 3 : 1.5, hasCount ? col : 0x444444, isActive ? 1 : 0.6);
+      ig.strokeCircle(cx, y, r);
+      // 图标
+      if (i === 0) {
+        // ＋槽：画一个小格子 + 加号
+        ig.lineStyle(2, hasCount ? col : 0x555555, 1);
+        ig.strokeRect(cx - 10, y - 10, 20, 20);
+        ig.lineStyle(2.5, hasCount ? 0xffffff : 0x555555, 1);
+        ig.lineBetween(cx, y - 6, cx, y + 6);
+        ig.lineBetween(cx - 6, y, cx + 6, y);
+      } else if (i === 1) {
+        // 取车：画一辆小车轮廓
+        ig.fillStyle(hasCount ? col : 0x555555, 1);
+        ig.fillRoundedRect(cx - 12, y - 6, 24, 12, 3);
+        ig.fillStyle(0x000000, 0.5);
+        ig.fillCircle(cx - 7, y + 7, 5);
+        ig.fillCircle(cx + 7, y + 7, 5);
+        ig.lineStyle(1.5, hasCount ? 0xffffff : 0x555555, 0.8);
+        ig.strokeCircle(cx - 7, y + 7, 5);
+        ig.strokeCircle(cx + 7, y + 7, 5);
+      } else {
+        // 清色：画彩色星形
+        ig.fillStyle(hasCount ? col : 0x555555, 1);
+        ig.fillCircle(cx, y, 10);
+        ig.lineStyle(2, hasCount ? 0xffffff : 0x555555, 0.8);
+        for (let a = 0; a < 4; a++) {
+          const angle = (a / 4) * Math.PI * 2 - Math.PI / 4;
+          ig.lineBetween(cx + Math.cos(angle) * 5, y + Math.sin(angle) * 5,
+                         cx + Math.cos(angle) * 14, y + Math.sin(angle) * 14);
+        }
+      }
+      // 计数文字
+      this._itemTxts[i].setPosition(cx, y + r + 4)
+        .setText(`${labels[i]}\n×${this._itemCounts[i]}`)
+        .setColor(hasCount ? '#ffffff' : '#444466');
+    }
+  }
+
+  // 点击道具栏处理，返回 true 表示已消费
+  _handleItemClick(px, py) {
+    if (this.logic.state !== 'playing') return false;
+    const y = this._itemBarY();
+    for (let i = 0; i < 3; i++) {
+      const cx = this._itemX(i);
+      if (Math.hypot(px - cx, py - y) < 30) {
+        if (this._itemCounts[i] <= 0) return true; // 耗尽，消费事件但不执行
+        if (this._activeItem === i) {
+          // 再次点击取消激活
+          this._deactivateItem();
+        } else {
+          this._deactivateItem();
+          this._activeItem = i;
+          if (i === 0) this._useItem1();
+          else if (i === 1) this._activateItem2();
+          else if (i === 2) this._activateItem3();
+        }
+        return true;
+      }
+    }
+    // 道具二激活中：点击队列区域选车
+    if (this._item2Paused) {
+      return this._item2HandleClick(px, py);
+    }
+    // 道具三激活中：点击画布区域选色
+    if (this._item3Active) {
+      return this._item3HandleClick(px, py);
+    }
+    return false;
+  }
+
+  _deactivateItem() {
+    if (this._activeItem === 1 && this._item2Paused) this._cancelItem2();
+    if (this._activeItem === 2 && this._item3Active) this._cancelItem3();
+    this._activeItem = -1;
+  }
+
+  _resetItemState() {
+    if (this._item2Paused) this._cancelItem2();
+    if (this._item3Active) this._cancelItem3();
+    this._activeItem = -1;
+    // 每关重置道具数量（可改为关卡间保留，按需调整）
+    this._itemCounts = [3, 3, 3];
+  }
+
+  // ── 道具一：增加暂存槽 ──────────────────────────────────────
+
+  _useItem1() {
+    this._itemCounts[0]--;
+    this._activeItem = -1;
+    const maxCap = BUFFER_CAP + 3;
+    if (this.logic.bufferCap >= maxCap) return; // 已达上限
+    this.logic.bufferCap++;
+    // 金光粒子飞向暂存区
+    const sx = this._itemX(0), sy = this._itemBarY();
+    const tx = this._bufSlotX(this.logic.bufferCap - 1), ty = G.BUFFER_Y;
+    this._spawnGoldBeam(sx, sy, tx, ty);
+  }
+
+  _spawnGoldBeam(sx, sy, tx, ty) {
+    const pg = this.add.graphics().setDepth(20);
+    // 粒子：6 颗金色小圆沿轨迹飞行
+    const particles = Array.from({length: 6}, (_, i) => ({
+      t: i / 6, x: sx, y: sy
+    }));
+    let progress = 0;
+    const timer = this.time.addEvent({ delay: 16, loop: true, callback: () => {
+      progress = Math.min(1, progress + 0.045);
+      pg.clear();
+      for (const p of particles) {
+        const pt = (progress + p.t) % 1;
+        const cx = sx + (tx - sx) * pt;
+        const cy = sy + (ty - sy) * pt - Math.sin(pt * Math.PI) * 60;
+        const alpha = pt < 0.1 ? pt * 10 : pt > 0.9 ? (1 - pt) * 10 : 1;
+        pg.fillStyle(0xffdd44, alpha); pg.fillCircle(cx, cy, 5 * (1 - pt * 0.5));
+        pg.fillStyle(0xffffff, alpha * 0.7); pg.fillCircle(cx, cy, 2);
+      }
+      if (progress >= 1) {
+        timer.remove();
+        pg.destroy();
+        // 新槽展开闪光
+        this._flash(tx, ty);
+      }
+    }});
+  }
+
+  // ── 道具二：取走一辆车 ─────────────────────────────────────
+
+  _activateItem2() {
+    this._item2Paused = true;
+    // 队列区上拉动画（队列从当前位置向上移动 80px，露出更多车辆）
+    const targetOffset = -80;
+    this.tweens.add({
+      targets: this,
+      _item2QueueOffsetY: targetOffset,
+      duration: 300, ease: 'Back.easeOut'
+    });
+  }
+
+  _item2HandleClick(px, py) {
+    const QUEUE_Y = G.QUEUE_Y + this._item2QueueOffsetY;
+    const nl = this.logic.lanes.length;
+    const qHW = Math.min(50, (VW - 60) / nl * 0.5);
+    for (let li = 0; li < nl; li++) {
+      const cx = this._laneCX(li, nl);
+      if (Math.abs(px - cx) < qHW && py >= QUEUE_Y - 10 && py <= QUEUE_Y + 180) {
+        // 计算点击的是第几辆（相对于上拉后的位置）
+        const relY = py - QUEUE_Y;
+        const slotIdx = Math.floor(relY / 60);
+        const lane = this.logic.lanes[li];
+        if (!lane || lane.length === 0) return true;
+        const tIdx = Math.max(0, Math.min(slotIdx, lane.length - 1));
+        this._item2ConfirmRemove(li, tIdx);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _item2ConfirmRemove(laneIdx, turretIdx) {
+    const lane = this.logic.lanes[laneIdx];
+    if (!lane || turretIdx >= lane.length) return;
+    const def = lane[turretIdx];
+    this._itemCounts[1]--;
+    this._activeItem = -1;
+    // 从队列中取出
+    lane.splice(turretIdx, 1);
+    // 加入轨道（即使轨道满了也强制上车，道具效果不受 trackCap 限制）
+    const t = new ActiveTurret(def.color, def.ammo);
+    this.logic.turrets.push(t);
+    // 视觉：从队列位置飞入轨道起始点
+    const cx = this._laneCX(laneIdx, this.logic.lanes.length);
+    const fy = G.QUEUE_Y + this._item2QueueOffsetY + 32 + turretIdx * 60;
+    this._spawnTurretFlyIn(cx, fy, def.color);
+    this._cancelItem2();
+  }
+
+  _spawnTurretFlyIn(sx, sy, color) {
+    // 飞入到轨道起始点（底边左侧）
+    const { CANVAS_X, CANVAS_Y, CH } = G;
+    const tx = CANVAS_X, ty = CANVAS_Y + CH + TRACK_GAP;
+    const pg = this.add.graphics().setDepth(20);
+    const col = hexNum(color);
+    const trailPoints = [];
+    let progress = 0;
+    const timer = this.time.addEvent({ delay: 16, loop: true, callback: () => {
+      progress = Math.min(1, progress + 0.035);
+      const cx = sx + (tx - sx) * progress;
+      const cy = sy + (ty - sy) * progress - Math.sin(progress * Math.PI) * 80;
+      trailPoints.push({x: cx, y: cy, a: 1});
+      pg.clear();
+      // 拖尾
+      for (let i = trailPoints.length - 1; i >= 0; i--) {
+        const tp = trailPoints[i];
+        tp.a -= 0.06;
+        if (tp.a <= 0) { trailPoints.splice(i, 1); continue; }
+        pg.fillStyle(col, tp.a * 0.6); pg.fillCircle(tp.x, tp.y, 4 * tp.a);
+      }
+      // 本体：白色荧光 + 颜色圆
+      pg.fillStyle(0xffffff, 0.55); pg.fillCircle(cx, cy, 14);
+      pg.fillStyle(col, 1); pg.fillCircle(cx, cy, 10);
+      pg.lineStyle(2, 0xffffff, 0.9); pg.strokeCircle(cx, cy, 10);
+      pg.fillStyle(0x000000, 0.5); pg.fillCircle(cx, cy, 4);
+      if (progress >= 1) {
+        timer.remove();
+        pg.destroy();
+        this._flash(tx, ty);
+      }
+    }});
+  }
+
+  _cancelItem2() {
+    this._item2Paused = false;
+    this.tweens.add({
+      targets: this, _item2QueueOffsetY: 0,
+      duration: 220, ease: 'Quad.easeOut'
+    });
+  }
+
+  // ── 道具三：取走一种颜色 ───────────────────────────────────
+
+  _activateItem3() {
+    this._item3Active = true;
+    // 创建 Vignette 遮罩
+    if (!this._item3VignG) this._item3VignG = this.add.graphics().setDepth(18);
+    if (!this._item3SpotG) this._item3SpotG = this.add.graphics().setDepth(19);
+    this._drawVignette();
+    // 画布下移 30px
+    this.tweens.add({
+      targets: this, _item3CanvasOffsetY: 30,
+      duration: 350, ease: 'Back.easeOut',
+      onUpdate: () => this._updateItem3Spotlight()
+    });
+    this._updateItem3Spotlight();
+  }
+
+  _drawVignette() {
+    const g = this._item3VignG;
+    g.clear();
+    // 四角渐变黑色（用多个半透明矩形模拟羽化）
+    const steps = 12;
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      const margin = t * 180;
+      const alpha = (1 - t) * 0.55;
+      g.fillStyle(0x000000, alpha);
+      // 左
+      g.fillRect(0, 0, margin, VH);
+      // 右
+      g.fillRect(VW - margin, 0, margin, VH);
+      // 上
+      g.fillRect(0, 0, VW, margin * 0.6);
+      // 下
+      g.fillRect(0, VH - margin * 0.6, VW, margin * 0.6);
+    }
+  }
+
+  _updateItem3Spotlight() {
+    if (!this._item3SpotG) return;
+    const g = this._item3SpotG;
+    g.clear();
+    // 找颜色数量最多的色块，在其区域画聚光圆
+    const colorCount = {};
+    for (const b of this.logic.blocks) {
+      colorCount[b.color] = (colorCount[b.color] || 0) + 1;
+    }
+    let bestColor = null, bestCount = 0;
+    for (const [c, n] of Object.entries(colorCount)) {
+      if (n > bestCount) { bestColor = c; bestCount = n; }
+    }
+    if (!bestColor) return;
+    // 找该颜色所有格子的中心
+    const cells = this.logic.blocks.filter(b => b.color === bestColor);
+    const offY = CANVAS_Y + this._item3CanvasOffsetY;
+    const { CANVAS_X, CELL } = G;
+    let mx = 0, my = 0;
+    for (const b of cells) {
+      mx += CANVAS_X + b.x * CELL + CELL / 2;
+      my += offY + b.y * CELL + CELL / 2;
+    }
+    mx /= cells.length; my /= cells.length;
+    // 聚光灯：大半径淡光圈
+    g.fillStyle(0xffffff, 0.06); g.fillCircle(mx, my, 120);
+    g.fillStyle(0xffffff, 0.08); g.fillCircle(mx, my, 80);
+    g.fillStyle(0xffffff, 0.10); g.fillCircle(mx, my, 50);
+    g.lineStyle(2, 0xffffff, 0.5); g.strokeCircle(mx, my, 50);
+    // 闪光点
+    g.fillStyle(0xffffff, 0.9); g.fillCircle(mx, my - 48, 3);
+  }
+
+  _item3HandleClick(px, py) {
+    // 点击方块区域选择颜色
+    const offY = CANVAS_Y + this._item3CanvasOffsetY;
+    const { CANVAS_X, CW, CH, CELL, GW, GH } = G;
+    if (px < CANVAS_X || px > CANVAS_X + CW || py < offY || py > offY + CH) return false;
+    const col = Math.floor((px - CANVAS_X) / CELL);
+    const row = Math.floor((py - offY) / CELL);
+    if (col < 0 || col >= GW || row < 0 || row >= GH) return false;
+    // 找该格子对应的颜色
+    const block = this.logic.blocks.find(b => b.x === col && b.y === row);
+    if (!block) return false;
+    const targetColor = block.color;
+    this._itemCounts[2]--;
+    this._activeItem = -1;
+    this._item3ClearColor(targetColor);
+    return true;
+  }
+
+  _item3ClearColor(color) {
+    const targets = this.logic.blocks.filter(b => b.color === color);
+    if (targets.length === 0) { this._cancelItem3(); return; }
+    // 按行分组，从下到上逐行消除
+    const rows = {};
+    for (const b of targets) {
+      if (!rows[b.y]) rows[b.y] = [];
+      rows[b.y].push(b);
+    }
+    const sortedRows = Object.keys(rows).map(Number).sort((a, b) => b - a); // 从下到上
+    // 滚轮从下方飞入
+    if (!this._item3WheelG) this._item3WheelG = this.add.graphics().setDepth(21);
+    const wheelG = this._item3WheelG;
+    const { CANVAS_X, CW, CELL } = G;
+    const offY = CANVAS_Y + this._item3CanvasOffsetY;
+    const wheelTargetY = offY + G.CH + 30;
+    let wheelY = VH + 60;
+    let wheelProgress = 0;
+    let phase = 'fly_in'; // fly_in → collect → fly_out
+    let rowIdx = 0;
+    let rowTimer = 0;
+    const col = hexNum(color);
+
+    const tick = this.time.addEvent({ delay: 16, loop: true, callback: () => {
+      wheelG.clear();
+      if (phase === 'fly_in') {
+        wheelProgress = Math.min(1, wheelProgress + 0.06);
+        wheelY = VH + 60 + (wheelTargetY - VH - 60) * this._easeOut(wheelProgress);
+        this._drawWheel(wheelG, VW / 2, wheelY, col);
+        if (wheelProgress >= 1) { phase = 'collect'; rowIdx = 0; rowTimer = 0; }
+      } else if (phase === 'collect') {
+        rowTimer++;
+        // 每 10 帧消一行
+        if (rowTimer >= 10 && rowIdx < sortedRows.length) {
+          const r = sortedRows[rowIdx];
+          const rowBlocks = rows[r];
+          for (const b of rowBlocks) {
+            // 从逻辑层移除
+            this.logic.grid[b.y][b.x] = null;
+            const idx = this.logic.blocks.indexOf(b);
+            if (idx !== -1) this.logic.blocks.splice(idx, 1);
+            // 消除闪光
+            const bx = CANVAS_X + b.x * CELL + CELL / 2;
+            const by = offY + b.y * CELL + CELL / 2;
+            this._flash(bx, by);
+          }
+          rowIdx++;
+          rowTimer = 0;
+        }
+        this._drawWheel(wheelG, VW / 2, wheelY, col);
+        if (rowIdx >= sortedRows.length) {
+          // 收完所有色块后，同步移除同色炮台（轨道、暂存区、队列）
+          this.logic.turrets = this.logic.turrets.filter(t => t.color !== color);
+          this.logic.buffer  = this.logic.buffer.filter(t => t.color !== color);
+          for (const lane of this.logic.lanes) {
+            const before = lane.length;
+            const filtered = lane.filter(t => t.color !== color);
+            lane.length = 0;
+            filtered.forEach(t => lane.push(t));
+          }
+          // 同色飞行中的子弹也作废（否则会打到已消除的格子）
+          this.vBullets = this.vBullets.filter(b => b.color !== color);
+          // 稍等后飞出
+          this.time.delayedCall(300, () => { phase = 'fly_out'; wheelProgress = 0; });
+        }
+      } else if (phase === 'fly_out') {
+        wheelProgress = Math.min(1, wheelProgress + 0.05);
+        wheelY = wheelTargetY + (CANVAS_Y - 80 - wheelTargetY) * this._easeIn(wheelProgress);
+        this._drawWheel(wheelG, VW / 2, wheelY, col);
+        if (wheelProgress >= 1) {
+          tick.remove();
+          wheelG.clear();
+          // 画布归位
+          this.tweens.add({
+            targets: this, _item3CanvasOffsetY: 0,
+            duration: 300, ease: 'Quad.easeOut'
+          });
+          this._cancelItem3();
+          // 胜利判定
+          if (this.logic.blocks.length === 0) this.logic.state = 'win';
+        }
+      }
+    }});
+  }
+
+  _drawWheel(g, cx, cy, colorNum) {
+    const r = 28;
+    g.fillStyle(0x111122, 1); g.fillCircle(cx, cy, r);
+    g.lineStyle(3, colorNum, 1); g.strokeCircle(cx, cy, r);
+    g.lineStyle(3, colorNum, 0.6); g.strokeCircle(cx, cy, r - 8);
+    // 辐条
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      g.lineStyle(2, colorNum, 0.8);
+      g.lineBetween(cx + Math.cos(a) * 6, cy + Math.sin(a) * 6,
+                    cx + Math.cos(a) * (r - 2), cy + Math.sin(a) * (r - 2));
+    }
+    g.fillStyle(colorNum, 1); g.fillCircle(cx, cy, 8);
+    g.fillStyle(0xffffff, 0.8); g.fillCircle(cx - 3, cy - 3, 3);
+  }
+
+  _easeOut(t) { return 1 - (1 - t) * (1 - t); }
+  _easeIn(t)  { return t * t; }
+
+  _cancelItem3() {
+    this._item3Active = false;
+    this._item3VignG?.clear();
+    this._item3SpotG?.clear();
+    // 画布偏移归零（如果滚轮动画已处理则跳过）
+  }
+
+  // ── 道具三：画布渲染偏移 ───────────────────────────────────
+  // _drawCanvas 和 _drawTrack 使用 _item3CanvasOffsetY 偏移
 
   // —— 选关面板 ——
 
@@ -3843,7 +4307,8 @@ class GameScene extends Phaser.Scene {
   // —— 坐标工具 ——
 
   _bufSlotX(i) {
-    return (VW - BUFFER_CAP * 52) / 2 + 26 + i * 52;
+    const cap = this.logic ? this.logic.bufferCap : BUFFER_CAP;
+    return (VW - cap * 52) / 2 + 26 + i * 52;
   }
 
   _laneCX(li, nl) {
@@ -3876,314 +4341,314 @@ class GameScene extends Phaser.Scene {
 // 关卡元信息（用于选关面板显示）
 // ============================================================
 const LEVEL_META = [
-  { name: '皇冠',   colors: ['#FFD700'] },
-  { name: '双钻石', colors: ['#FF3344', '#3399FF'] },
-  { name: '三星',   colors: ['#FF4455', '#44CC77', '#4488FF'] },
-  { name: '爱心',   colors: ['#FF2244'] },
-  { name: '五角星', colors: ['#FFDD00'] },
-  { name: '蝴蝶',   colors: ['#FF8844', '#44AAFF', '#AA44CC'] },
-  { name: '圣诞树', colors: ['#33AA44', '#884422', '#FFCC00'] },
-  { name: '像素凤凰', colors: ['#00DDFF', '#FF44AA', '#FFDD00', '#FF6600', '#8844FF'] },
-  { name: '像素巨龙', colors: ['#CC4400', '#FFAA44', '#44AAFF', '#4488FF', '#FF2244', '#FFDD00', '#33CC77', '#AA44FF', '#FF8800', '#FF6600'] },
-  { name: '彩虹旗', colors: ['#FF3333', '#FF8800', '#FFDD00', '#33BB44', '#4488FF', '#AA44EE'] },
-  { name: '企鹅',   colors: ['#FF69B4', '#00CED1', '#4169E1', '#F5F5F5', '#222222'] },
+  { name: "1",   colors: ['#FFD700'] },
+  { name: "2", colors: ['#FF3344', '#3399FF'] },
+  { name: "3",   colors: ['#FF4455', '#44CC77', '#4488FF'] },
+  { name: "4",   colors: ['#FF2244'] },
+  { name: "5", colors: ['#FFDD00'] },
+  { name: "6",   colors: ['#FF8844', '#44AAFF', '#AA44CC'] },
 
-  { name: "竞品L1", colors: ["#FF69B4", "#00CED1"] },
-  { name: "竞品L2", colors: ["#8B008B", "#FFD700"] },
-  { name: "竞品L3", colors: ["#228B22", "#8B008B", "#FFD700"] },
-  { name: "竞品L4", colors: ["#FF69B4", "#8B008B", "#00CED1"] },
-  { name: "竞品L5", colors: ["#228B22", "#FF8C00", "#8B008B"] },
-  { name: "竞品L6", colors: ["#222222", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L7", colors: ["#4169E1", "#228B22", "#FF8C00"] },
-  { name: "竞品L11", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L12", colors: ["#FF69B4", "#8B008B", "#FFD700"] },
-  { name: "竞品L13", colors: ["#00008B", "#00CED1", "#FFD700"] },
-  { name: "竞品L14", colors: ["#222222", "#CC0000", "#8B4513", "#50C878", "#8FBC8F", "#F5DEB3", "#FFB6C1"] },
-  { name: "竞品L15", colors: ["#222222", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L16", colors: ["#00008B", "#222222", "#CC0000", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L17", colors: ["#4169E1", "#222222", "#FF69B4", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L20", colors: ["#222222", "#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#C8A2C8"] },
-  { name: "竞品L22", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L23", colors: ["#4169E1", "#FF8C00", "#8B008B", "#FFD700"] },
-  { name: "竞品L24", colors: ["#228B22", "#FF69B4", "#F5F5F5", "#8B4513", "#F5DEB3"] },
-  { name: "竞品L25", colors: ["#00008B", "#222222", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L27", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1"] },
-  { name: "竞品L28", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1"] },
-  { name: "竞品L29", colors: ["#00008B", "#228B22", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L30", colors: ["#FF8C00", "#00CED1", "#50C878", "#C8A2C8"] },
-  { name: "竞品L32", colors: ["#FF8C00", "#00CED1", "#50C878", "#C8A2C8"] },
-  { name: "竞品L33", colors: ["#00008B", "#222222", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878"] },
-  { name: "竞品L34", colors: ["#222222", "#FF69B4", "#00CED1", "#FFD700"] },
-  { name: "竞品L35", colors: ["#222222", "#FF69B4", "#CC0000", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L37", colors: ["#228B22", "#FF8C00", "#CC0000", "#F5F5F5"] },
-  { name: "竞品L38", colors: ["#222222", "#FF69B4", "#00CED1", "#FFD700"] },
-  { name: "竞品L39", colors: ["#4169E1", "#222222", "#FF69B4", "#8B008B", "#FFD700"] },
-  { name: "竞品L40", colors: ["#228B22", "#FF8C00", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L41", colors: ["#00008B", "#222222", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L42", colors: ["#228B22", "#FF8C00", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L48", colors: ["#FF69B4", "#CC0000", "#F5F5F5"] },
-  { name: "竞品L52", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L53", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L54", colors: ["#00008B", "#222222", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#50C878"] },
-  { name: "竞品L55", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L56", colors: ["#4169E1", "#222222", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L57", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L58", colors: ["#00008B", "#222222", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#50C878"] },
-  { name: "竞品L59", colors: ["#4169E1", "#228B22", "#FF8C00", "#CC0000", "#FFD700", "#C8A2C8"] },
-  { name: "竞品L61", colors: ["#4169E1", "#222222", "#FF69B4", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L62", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#FA8072"] },
-  { name: "竞品L63", colors: ["#00008B", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#4B0082"] },
-  { name: "竞品L64", colors: ["#222222", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L65", colors: ["#4169E1", "#222222", "#8B008B", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L66", colors: ["#228B22", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L70", colors: ["#4169E1", "#FFD700", "#50C878", "#FA8072"] },
-  { name: "竞品L72", colors: ["#222222", "#FF8C00", "#FF69B4", "#F5DEB3"] },
-  { name: "竞品L73", colors: ["#222222", "#FF69B4", "#CC0000", "#F5F5F5", "#8FBC8F"] },
-  { name: "竞品L76", colors: ["#4169E1", "#228B22", "#FF69B4", "#8B008B", "#CC0000", "#FFD700"] },
-  { name: "竞品L81", colors: ["#FF69B4", "#CC0000", "#F5F5F5"] },
-  { name: "竞品L83", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L84", colors: ["#4169E1", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L85", colors: ["#4169E1", "#228B22", "#FF69B4", "#8B008B", "#FFD700"] },
-  { name: "竞品L86", colors: ["#4169E1", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#50C878"] },
-  { name: "竞品L87", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#C8A2C8"] },
-  { name: "竞品L89", colors: ["#00008B", "#222222", "#FF69B4", "#CC0000", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L90", colors: ["#00008B", "#FF8C00", "#FF69B4", "#8B008B", "#CC0000", "#00CED1", "#FFD700"] },
-  { name: "竞品L94", colors: ["#00008B", "#222222", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L97", colors: ["#4169E1", "#222222", "#FF69B4", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L98", colors: ["#4169E1", "#222222", "#FF69B4", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L99", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L100", colors: ["#8B008B", "#00CED1", "#FFD700", "#50C878", "#FA8072"] },
-  { name: "竞品L103", colors: ["#222222", "#F5F5F5"] },
-  { name: "竞品L107", colors: ["#222222", "#228B22", "#CC0000", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L109", colors: ["#222222", "#FF8C00", "#CC0000", "#FFD700", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L113", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#F5F5F5"] },
-  { name: "竞品L117", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#F5DEB3"] },
-  { name: "竞品L118", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#00CED1", "#FFD700"] },
-  { name: "竞品L119", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#F5DEB3"] },
-  { name: "竞品L120", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L126", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L128", colors: ["#222222", "#FF8C00", "#F5F5F5", "#FFB6C1", "#FFAA5C", "#800020"] },
-  { name: "竞品L129", colors: ["#222222", "#228B22", "#FF8C00", "#FFD700", "#F5F5F5", "#8B4513", "#50C878", "#FFB6C1"] },
-  { name: "竞品L131", colors: ["#00008B", "#222222", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878"] },
-  { name: "竞品L133", colors: ["#222222", "#FF8C00", "#8B008B", "#CC0000", "#FFD700", "#F5F5F5", "#FFB6C1"] },
-  { name: "竞品L135", colors: ["#222222", "#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#50C878", "#F5DEB3"] },
-  { name: "竞品L136", colors: ["#4169E1", "#00008B", "#222222", "#228B22", "#FF69B4", "#00CED1", "#FFD700"] },
-  { name: "竞品L137", colors: ["#00008B", "#228B22", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L138", colors: ["#222222", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L140", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5"] },
-  { name: "竞品L143", colors: ["#00008B", "#222222", "#228B22", "#FFD700", "#F5F5F5", "#50C878", "#8FBC8F", "#808080"] },
-  { name: "竞品L148", colors: ["#00008B", "#222222", "#8B008B", "#FFD700", "#FF007F"] },
-  { name: "竞品L150", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5", "#C8A2C8"] },
-  { name: "竞品L152", colors: ["#222222", "#F5F5F5", "#50C878", "#E6E6FA", "#CB4154", "#FFAA5C"] },
-  { name: "竞品L153", colors: ["#228B22", "#FF69B4", "#F5F5F5", "#8B4513", "#F5DEB3"] },
-  { name: "竞品L154", colors: ["#4169E1", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#50C878"] },
-  { name: "竞品L155", colors: ["#222222", "#CC0000", "#8B4513", "#50C878", "#8FBC8F", "#F5DEB3", "#FFB6C1"] },
-  { name: "竞品L156", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#C8A2C8"] },
-  { name: "竞品L158", colors: ["#00008B", "#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8FBC8F", "#E6E6FA"] },
-  { name: "竞品L159", colors: ["#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5", "#8B4513", "#006400", "#FFAA5C"] },
-  { name: "竞品L161", colors: ["#222222", "#FF69B4", "#8B008B", "#CC0000", "#F5DEB3", "#808080"] },
-  { name: "竞品L163", colors: ["#228B22", "#CC0000", "#F5F5F5", "#8B4513", "#C8A2C8", "#404040"] },
-  { name: "竞品L164", colors: ["#222222", "#F5F5F5", "#006400", "#8FBC8F"] },
-  { name: "竞品L165", colors: ["#228B22", "#CC0000", "#F5F5F5", "#8B4513", "#C8A2C8", "#404040"] },
-  { name: "竞品L167", colors: ["#4169E1", "#CC0000", "#F5F5F5", "#006400", "#8FBC8F", "#404040", "#FFB6C1"] },
-  { name: "竞品L168", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#F5DEB3", "#FFB6C1"] },
-  { name: "竞品L169", colors: ["#4169E1", "#222222", "#8B4513", "#8FBC8F", "#F5DEB3", "#FF007F"] },
-  { name: "竞品L171", colors: ["#4169E1", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#50C878"] },
-  { name: "竞品L172", colors: ["#222222", "#FF69B4", "#8B008B", "#CC0000", "#F5DEB3", "#808080"] },
-  { name: "竞品L175", colors: ["#4169E1", "#222222", "#228B22", "#CC0000", "#FFD700", "#8B4513", "#F5DEB3"] },
-  { name: "竞品L177", colors: ["#222222", "#FF8C00", "#CC0000", "#FFD700", "#F5F5F5", "#8FBC8F", "#FFB6C1"] },
-  { name: "竞品L178", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#CC4E36", "#F5DEB3"] },
-  { name: "竞品L179", colors: ["#222222", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#CB4154"] },
-  { name: "竞品L181", colors: ["#228B22", "#CC0000", "#00CED1", "#FFD700", "#50C878", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L188", colors: ["#222222", "#F5F5F5", "#006400", "#8FBC8F"] },
-  { name: "竞品L189", colors: ["#222222", "#F5F5F5", "#F5DEB3", "#808080", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L191", colors: ["#4169E1", "#222222", "#8B008B", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L196", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#F5DEB3", "#FFB6C1"] },
-  { name: "竞品L200", colors: ["#222222", "#228B22", "#FF69B4", "#CC0000"] },
-  { name: "竞品L201", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#006400"] },
-  { name: "竞品L202", colors: ["#00008B", "#222222", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L203", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#CC0000", "#00CED1", "#FFD700"] },
-  { name: "竞品L204", colors: ["#00008B", "#228B22", "#FF8C00", "#CC0000", "#FFD700", "#E6E6FA", "#4B0082", "#FF007F"] },
-  { name: "竞品L205", colors: ["#222222", "#F5F5F5", "#F5DEB3", "#808080", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L207", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#E6E6FA", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L209", colors: ["#FF8C00", "#00CED1", "#FFD700", "#50C878", "#4B0082"] },
-  { name: "竞品L210", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#F5F5F5", "#006400", "#CC4E36", "#F5DEB3"] },
-  { name: "竞品L213", colors: ["#222222", "#F5DEB3", "#808080", "#4B0082"] },
-  { name: "竞品L216", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#F5DEB3", "#FFB6C1"] },
-  { name: "竞品L217", colors: ["#00CED1", "#F5F5F5", "#50C878", "#8FBC8F", "#808080", "#4B0082", "#FF007F"] },
-  { name: "竞品L218", colors: ["#222222", "#FF69B4", "#CC0000", "#00CED1", "#F5F5F5", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L221", colors: ["#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#F5DEB3", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L223", colors: ["#222222", "#FF8C00", "#FFD700", "#50C878", "#808080", "#404040", "#4B0082"] },
-  { name: "竞品L230", colors: ["#4169E1", "#222222", "#FF8C00", "#00CED1", "#FFD700"] },
-  { name: "竞品L231", colors: ["#4169E1", "#FF69B4", "#CC0000", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L232", colors: ["#4169E1", "#00008B", "#222222", "#CC0000", "#F5F5F5", "#FFB6C1"] },
-  { name: "竞品L233", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#F5F5F5", "#006400", "#E6E6FA"] },
-  { name: "竞品L235", colors: ["#222222", "#FF8C00", "#00CED1", "#FFD700", "#808080", "#FFB6C1"] },
-  { name: "竞品L238", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#CC4E36", "#F5DEB3"] },
-  { name: "竞品L239", colors: ["#00008B", "#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#FFB6C1"] },
-  { name: "竞品L241", colors: ["#00008B", "#222222", "#8B008B", "#FFD700", "#FF007F"] },
-  { name: "竞品L242", colors: ["#00008B", "#222222", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#808080"] },
-  { name: "竞品L245", colors: ["#222222", "#F5F5F5", "#8B4513", "#006400", "#FA8072", "#E6E6FA", "#FFAA5C"] },
-  { name: "竞品L250", colors: ["#4169E1", "#00008B", "#222222", "#FF69B4", "#FFD700", "#F5F5F5", "#FA8072", "#E6E6FA"] },
-  { name: "竞品L255", colors: ["#222222", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#CB4154", "#FFB6C1"] },
-  { name: "竞品L259", colors: ["#222222", "#FF8C00", "#CC0000", "#FFD700", "#8B4513", "#808080", "#FFB6C1"] },
-  { name: "竞品L260", colors: ["#00008B", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L262", colors: ["#228B22", "#FF8C00", "#CC0000", "#FFD700", "#E6E6FA", "#4B0082"] },
-  { name: "竞品L263", colors: ["#222222", "#F5F5F5", "#50C878", "#C8A2C8", "#FF007F"] },
-  { name: "竞品L264", colors: ["#222222", "#8B008B", "#F5F5F5", "#8B4513", "#006400", "#FF007F"] },
-  { name: "竞品L265", colors: ["#FF8C00", "#8B008B", "#CC0000", "#F5F5F5", "#404040", "#FFB6C1"] },
-  { name: "竞品L266", colors: ["#222222", "#FF69B4", "#FFD700", "#F5F5F5", "#8B4513"] },
-  { name: "竞品L270", colors: ["#222222", "#228B22", "#CC0000", "#00CED1", "#F5F5F5", "#50C878", "#4B0082", "#FF007F"] },
-  { name: "竞品L271", colors: ["#4169E1", "#222222", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#006400", "#8FBC8F"] },
-  { name: "竞品L272", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#8B4513", "#50C878", "#808080"] },
-  { name: "竞品L274", colors: ["#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L277", colors: ["#228B22", "#FFD700", "#F5F5F5", "#8B4513"] },
-  { name: "竞品L284", colors: ["#CC0000", "#F5F5F5", "#F5DEB3"] },
-  { name: "竞品L290", colors: ["#4169E1", "#222222", "#228B22", "#CC0000", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L291", colors: ["#222222", "#FF8C00", "#CC0000", "#8FBC8F", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L292", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#8B008B", "#00CED1", "#FFB6C1"] },
-  { name: "竞品L293", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#50C878", "#808080", "#4B0082", "#FF007F"] },
-  { name: "竞品L294", colors: ["#4169E1", "#222222", "#228B22", "#F5F5F5", "#8B4513", "#006400", "#F5DEB3", "#404040"] },
-  { name: "竞品L299", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#50C878", "#8FBC8F", "#F5DEB3", "#4B0082"] },
-  { name: "竞品L305", colors: ["#228B22", "#FF8C00", "#CC0000", "#8B4513", "#4B0082"] },
-  { name: "竞品L307", colors: ["#00008B", "#FF69B4", "#00CED1", "#F5F5F5", "#C8A2C8", "#F5DEB3", "#4B0082"] },
-  { name: "竞品L311", colors: ["#222222", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#8FBC8F", "#FFAA5C"] },
-  { name: "竞品L315", colors: ["#222222", "#F5F5F5", "#50C878", "#FA8072", "#CC4E36", "#CB4154", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L320", colors: ["#222222", "#CC0000", "#8B4513", "#006400", "#F5DEB3"] },
-  { name: "竞品L321", colors: ["#222222", "#FFD700", "#F5F5F5", "#F5DEB3", "#CB4154", "#FFB6C1"] },
-  { name: "竞品L324", colors: ["#222222", "#FF8C00", "#F5F5F5", "#CC4E36", "#404040", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L328", colors: ["#222222", "#FF69B4", "#CC0000", "#F5F5F5", "#8B4513", "#CB4154", "#FFAA5C"] },
-  { name: "竞品L333", colors: ["#222222", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#E6E6FA"] },
-  { name: "竞品L338", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#8B4513", "#CB4154", "#4B0082"] },
-  { name: "竞品L340", colors: ["#222222", "#00CED1", "#F5F5F5", "#8B4513", "#CC4E36", "#404040"] },
-  { name: "竞品L350", colors: ["#00CED1", "#F5F5F5", "#8B4513", "#FFB6C1"] },
-  { name: "竞品L351", colors: ["#4169E1", "#222222", "#FF8C00", "#F5F5F5"] },
-  { name: "竞品L352", colors: ["#222222", "#CC0000", "#F5F5F5", "#50C878", "#C8A2C8", "#E6E6FA", "#404040", "#FFAA5C"] },
-  { name: "竞品L363", colors: ["#222222", "#CC0000", "#FFD700", "#F5F5F5", "#8B4513", "#FA8072", "#404040"] },
-  { name: "竞品L364", colors: ["#222222", "#00CED1", "#F5F5F5", "#C8A2C8", "#E6E6FA", "#404040"] },
-  { name: "竞品L372", colors: ["#00008B", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L378", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#FFD700", "#E6E6FA"] },
-  { name: "竞品L383", colors: ["#222222", "#8B008B", "#FFD700", "#F5F5F5", "#50C878", "#CC4E36", "#404040", "#FFB6C1"] },
-  { name: "竞品L390", colors: ["#4169E1", "#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L397", colors: ["#222222", "#228B22", "#8B008B", "#00CED1", "#FFD700", "#006400", "#FFB6C1"] },
-  { name: "竞品L400", colors: ["#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#4B0082"] },
-  { name: "竞品L403", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#50C878", "#808080", "#4B0082", "#5F9EA0"] },
-  { name: "竞品L404", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L413", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5"] },
-  { name: "竞品L423", colors: ["#FF8C00", "#CC0000", "#F5F5F5", "#4B0082", "#FFB6C1", "#FFAA5C", "#5F9EA0"] },
-  { name: "竞品L430", colors: ["#4169E1", "#222222", "#FF8C00", "#00CED1", "#8FBC8F"] },
-  { name: "竞品L432", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#8B4513", "#50C878", "#CC4E36", "#800020"] },
-  { name: "竞品L440", colors: ["#222222", "#228B22", "#00CED1", "#006400", "#8FBC8F", "#CC4E36", "#C4A265"] },
-  { name: "竞品L441", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#4B0082", "#FFB6C1", "#5F9EA0"] },
-  { name: "竞品L444", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#808080", "#FFB6C1"] },
-  { name: "竞品L449", colors: ["#222222", "#CC0000", "#F5F5F5", "#C8A2C8", "#F5DEB3", "#FF007F", "#5F9EA0", "#9D00FF"] },
-  { name: "竞品L450", colors: ["#00008B", "#222222", "#8B008B", "#00CED1", "#F5F5F5", "#50C878", "#8FBC8F", "#FFAA5C"] },
-  { name: "竞品L455", colors: ["#222222", "#FF8C00", "#F5F5F5", "#8B4513", "#E6E6FA", "#CC4E36", "#4B0082", "#FFB6C1", "#FFAA5C"] },
-  { name: "竞品L456", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5", "#006400"] },
-  { name: "竞品L476", colors: ["#00008B", "#222222", "#FF8C00", "#FF69B4", "#FFD700", "#F5F5F5", "#8FBC8F", "#CC4E36"] },
-  { name: "竞品L500", colors: ["#4169E1", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#8FBC8F", "#4B0082"] },
-  { name: "竞品L511", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#808080", "#FFAA5C"] },
-  { name: "竞品L528", colors: ["#222222", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5", "#FA8072", "#800020"] },
-  { name: "竞品L530", colors: ["#4169E1", "#FF8C00", "#F5F5F5", "#F5DEB3", "#800020"] },
-  { name: "竞品L538", colors: ["#00008B", "#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#E6E6FA", "#4B0082", "#800020"] },
-  { name: "竞品L552", colors: ["#222222", "#FF8C00", "#FFD700", "#F5F5F5", "#E6E6FA", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L554", colors: ["#228B22", "#00CED1", "#F5F5F5", "#006400", "#FA8072", "#E6E6FA", "#404040", "#FFB6C1", "#5F9EA0"] },
-  { name: "竞品L562", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#4B0082", "#FFB6C1"] },
-  { name: "竞品L570", colors: ["#222222", "#00CED1", "#F5F5F5", "#E6E6FA", "#FFB6C1", "#5F9EA0", "#9D00FF"] },
-  { name: "竞品L573", colors: ["#222222", "#00CED1", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#CC4E36", "#FFAA5C"] },
-  { name: "竞品L575", colors: ["#00008B", "#222222", "#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#C8A2C8", "#4B0082", "#800020"] },
-  { name: "竞品L576", colors: ["#222222", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#CB4154"] },
-  { name: "竞品L600", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700"] },
-  { name: "竞品L602", colors: ["#222222", "#228B22", "#00CED1", "#8B4513", "#006400", "#8FBC8F", "#F5DEB3", "#FFAA5C"] },
-  { name: "竞品L619", colors: ["#4169E1", "#222222", "#00CED1", "#F5F5F5", "#8B4513", "#50C878", "#F5DEB3", "#C4A265"] },
-  { name: "竞品L620", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#50C878", "#8FBC8F", "#CB4154"] },
-  { name: "竞品L625", colors: ["#00008B", "#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#006400", "#FA8072", "#4B0082", "#9D00FF"] },
-  { name: "竞品L630", colors: ["#228B22", "#00CED1", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#404040", "#C4A265"] },
-  { name: "竞品L637", colors: ["#4169E1", "#222222", "#228B22", "#FF69B4", "#CC0000", "#F5F5F5", "#006400", "#FA8072"] },
-  { name: "竞品L646", colors: ["#4169E1", "#228B22", "#F5F5F5", "#8B4513", "#F5DEB3", "#CB4154", "#5F9EA0"] },
-  { name: "竞品L660", colors: ["#FF8C00"] },
-  { name: "竞品L669", colors: ["#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F", "#FFB6C1", "#9D00FF"] },
-  { name: "竞品L670", colors: ["#222222", "#228B22", "#F5F5F5", "#50C878", "#CC4E36", "#4B0082", "#FFAA5C", "#8B6914"] },
-  { name: "竞品L684", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#F5DEB3"] },
-  { name: "竞品L685", colors: ["#222222", "#FF69B4", "#00CED1", "#F5F5F5", "#FFB6C1", "#800020", "#C4A265", "#8B6914"] },
-  { name: "竞品L688", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#006400", "#FFB6C1", "#FFAA5C", "#8B6914"] },
-  { name: "竞品L693", colors: ["#4169E1", "#00008B", "#222222", "#CC0000", "#00CED1", "#F5F5F5", "#006400", "#FFAA5C"] },
-  { name: "竞品L700", colors: ["#222222", "#F5F5F5", "#F5DEB3", "#4B0082", "#FFB6C1", "#800020", "#5F9EA0", "#9D00FF"] },
-  { name: "竞品L708", colors: ["#FF8C00", "#FFD700", "#F5F5F5", "#E6E6FA", "#4B0082", "#FF007F", "#5F9EA0", "#9D00FF"] },
-  { name: "竞品L726", colors: ["#00008B", "#222222", "#228B22", "#CC0000", "#F5F5F5", "#006400", "#F5DEB3", "#8B6914"] },
-  { name: "竞品L731", colors: ["#222222", "#CC0000", "#F5F5F5", "#006400", "#FFAA5C", "#8B6914"] },
-  { name: "竞品L737", colors: ["#4169E1", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#808080"] },
-  { name: "竞品L745", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#8FBC8F", "#4B0082"] },
-  { name: "竞品L750", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#F5DEB3", "#800020"] },
-  { name: "竞品L768", colors: ["#4169E1", "#222222", "#F5F5F5", "#006400", "#FA8072", "#F5DEB3", "#800020", "#C4A265"] },
-  { name: "竞品L777", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#CC4E36", "#FFB6C1"] },
-  { name: "竞品L787", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L800", colors: ["#222222", "#8B4513", "#50C878", "#F5DEB3", "#CB4154", "#808080"] },
-  { name: "竞品L801", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1"] },
-  { name: "竞品L803", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#F5DEB3", "#4B0082", "#5F9EA0"] },
-  { name: "竞品L804", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#006400", "#8FBC8F", "#800020"] },
-  { name: "竞品L809", colors: ["#4169E1", "#222222", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#FA8072", "#E6E6FA"] },
-  { name: "竞品L811", colors: ["#00008B", "#FFD700", "#F5F5F5", "#006400", "#404040"] },
-  { name: "竞品L818", colors: ["#222222", "#FF8C00", "#F5F5F5", "#8B4513", "#006400", "#CC4E36", "#F5DEB3", "#800020"] },
-  { name: "竞品L819", colors: ["#228B22", "#FF69B4", "#8B008B", "#CC0000", "#FFD700", "#F5F5F5", "#50C878", "#E6E6FA", "#404040"] },
-  { name: "竞品L821", colors: ["#222222", "#F5F5F5", "#808080", "#FFAA5C", "#8B6914"] },
-  { name: "竞品L832", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#50C878", "#FA8072", "#800020"] },
-  { name: "竞品L841", colors: ["#222222", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#F5F5F5", "#4B0082"] },
-  { name: "竞品L851", colors: ["#4169E1", "#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#9D00FF"] },
-  { name: "竞品L860", colors: ["#222222", "#228B22", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F"] },
-  { name: "竞品L866", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#800020"] },
-  { name: "竞品L871", colors: ["#222222", "#CC0000", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#FFB6C1", "#9D00FF"] },
-  { name: "竞品L882", colors: ["#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L891", colors: ["#222222", "#FF8C00", "#8B008B", "#00CED1", "#F5F5F5", "#FFB6C1", "#FFAA5C", "#8B6914"] },
-  { name: "竞品L892", colors: ["#222222", "#FF8C00", "#F5F5F5", "#FFB6C1", "#FFAA5C", "#800020"] },
-  { name: "竞品L894", colors: ["#4169E1", "#222222", "#FF8C00", "#FF69B4", "#F5F5F5", "#8B4513", "#8FBC8F", "#F5DEB3"] },
-  { name: "竞品L897", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#C4A265"] },
-  { name: "竞品L901", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#C8A2C8"] },
-  { name: "竞品L904", colors: ["#222222", "#CC0000", "#F5F5F5", "#006400", "#50C878", "#FFAA5C"] },
-  { name: "竞品L908", colors: ["#4169E1", "#00CED1", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L911", colors: ["#222222", "#228B22", "#F5F5F5", "#006400", "#8FBC8F", "#FA8072"] },
-  { name: "竞品L916", colors: ["#4169E1", "#222222", "#FF8C00", "#FFD700", "#8B4513", "#006400", "#808080"] },
-  { name: "竞品L917", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#FFAA5C"] },
-  { name: "竞品L940", colors: ["#222222", "#FF8C00", "#CC0000", "#4B0082", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L942", colors: ["#222222", "#228B22", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#FF007F", "#FFB6C1", "#FFAA5C"] },
-  { name: "竞品L945", colors: ["#222222", "#00CED1", "#F5F5F5", "#FF007F", "#FFB6C1"] },
-  { name: "竞品L946", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#C8A2C8", "#CC4E36", "#4B0082"] },
-  { name: "竞品L952", colors: ["#4169E1", "#FF8C00", "#F5F5F5", "#FF007F", "#FFB6C1", "#800020"] },
-  { name: "竞品L971", colors: ["#222222", "#8B008B", "#50C878", "#8FBC8F", "#CB4154", "#808080"] },
-  { name: "竞品L973", colors: ["#228B22", "#F5F5F5", "#006400", "#FFAA5C", "#8B6914"] },
-  { name: "竞品L981", colors: ["#FF8C00", "#F5F5F5", "#8B4513", "#C8A2C8", "#8FBC8F", "#FA8072", "#FFAA5C"] },
-  { name: "竞品L993", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#006400", "#E6E6FA"] },
-  { name: "竞品L1001", colors: ["#4169E1", "#FFD700", "#50C878", "#FF007F", "#9D00FF"] },
-  { name: "竞品L1005", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8FBC8F"] },
-  { name: "竞品L1011", colors: ["#4169E1", "#CC0000", "#FFD700", "#F5F5F5", "#006400"] },
-  { name: "竞品L1012", colors: ["#4169E1", "#00CED1", "#F5F5F5", "#8B4513", "#006400"] },
-  { name: "竞品L1014", colors: ["#00008B", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#006400", "#FFB6C1"] },
-  { name: "竞品L1021", colors: ["#FFD700", "#F5F5F5", "#006400", "#8B6914"] },
-  { name: "竞品L1028", colors: ["#00008B", "#222222", "#FF8C00", "#8B008B", "#00CED1", "#F5F5F5", "#4B0082", "#FFB6C1", "#FFAA5C"] },
-  { name: "竞品L1030", colors: ["#222222", "#228B22", "#00CED1", "#F5F5F5", "#C8A2C8", "#4B0082", "#9D00FF"] },
-  { name: "竞品L1034", colors: ["#4169E1", "#00008B", "#222222", "#228B22", "#00CED1", "#F5F5F5", "#F5DEB3", "#C4A265"] },
-  { name: "竞品L1041", colors: ["#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#006400", "#FFB6C1", "#9D00FF"] },
-  { name: "竞品L1047", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#FFB6C1", "#9D00FF"] },
-  { name: "竞品L1055", colors: [] },
-  { name: "竞品L1071", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513"] },
-  { name: "竞品L1075", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#50C878", "#FA8072", "#4B0082", "#800020", "#5F9EA0", "#C4A265"] },
-  { name: "竞品L1079", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#4B0082", "#FFB6C1", "#9D00FF"] },
-  { name: "竞品L1082", colors: [] },
-  { name: "竞品L1091", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#4B0082", "#FFB6C1", "#C4A265"] },
-  { name: "竞品L1092", colors: ["#222222", "#228B22", "#FF8C00", "#FFD700", "#F5F5F5", "#8B4513"] },
-  { name: "竞品L1101", colors: ["#228B22", "#FF8C00", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#F5DEB3", "#CB4154"] },
-  { name: "竞品L1120", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#50C878"] },
-  { name: "竞品L1128", colors: ["#222222", "#00CED1", "#F5F5F5", "#F5DEB3", "#4B0082", "#FF007F", "#FFB6C1", "#C4A265", "#9D00FF"] },
-  { name: "竞品L1135", colors: ["#00008B", "#222222", "#FF69B4", "#00CED1", "#F5F5F5", "#CC4E36"] },
-  { name: "竞品L1149", colors: ["#222222", "#00CED1", "#F5F5F5", "#E6E6FA", "#FF007F", "#FFB6C1", "#9D00FF"] },
-  { name: "竞品L1150", colors: ["#222222", "#FF8C00", "#8B008B", "#CC0000", "#FFD700", "#F5F5F5", "#F5DEB3", "#FFB6C1"] },
-  { name: "竞品L1154", colors: ["#4169E1", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#404040"] },
-  { name: "竞品L1155", colors: ["#222222", "#FF8C00", "#FF69B4", "#F5F5F5", "#8B4513", "#F5DEB3", "#4B0082", "#C4A265", "#6E7F80"] },
-  { name: "竞品L1159", colors: ["#222222", "#F5F5F5", "#8B4513", "#F5DEB3", "#CB4154", "#C4A265", "#6E7F80"] },
-  { name: "竞品L1163", colors: ["#4169E1", "#222222", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#800020", "#9D00FF"] },
-  { name: "竞品L1167", colors: ["#222222", "#F5F5F5", "#8FBC8F", "#FFB6C1", "#5F9EA0", "#6E7F80"] },
-  { name: "竞品L1185", colors: [] },
-  { name: "竞品L1189", colors: ["#4169E1", "#222222", "#228B22", "#FF8C00", "#FFD700", "#F5F5F5", "#006400", "#50C878", "#800020"] }
+  { name: "7", colors: ['#00DDFF', '#FF44AA', '#FFDD00', '#FF6600', '#8844FF'] },
+  { name: "8", colors: ['#CC4400', '#FFAA44', '#44AAFF', '#4488FF', '#FF2244', '#FFDD00', '#33CC77', '#AA44FF', '#FF8800', '#FF6600'] },
+  { name: "9", colors: ['#FF3333', '#FF8800', '#FFDD00', '#33BB44', '#4488FF', '#AA44EE'] },
+  { name: "10",   colors: ['#FF69B4', '#00CED1', '#4169E1', '#F5F5F5', '#222222'] },
+
+  { name: "11", colors: ["#FF69B4", "#00CED1"] },
+  { name: "12", colors: ["#8B008B", "#FFD700"] },
+  { name: "13", colors: ["#228B22", "#8B008B", "#FFD700"] },
+  { name: "14", colors: ["#FF69B4", "#8B008B", "#00CED1"] },
+  { name: "15", colors: ["#228B22", "#FF8C00", "#8B008B"] },
+  { name: "16", colors: ["#222222", "#00CED1", "#F5F5F5"] },
+  { name: "17", colors: ["#4169E1", "#228B22", "#FF8C00"] },
+  { name: "18", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5"] },
+  { name: "19", colors: ["#FF69B4", "#8B008B", "#FFD700"] },
+  { name: "20", colors: ["#00008B", "#00CED1", "#FFD700"] },
+  { name: "21", colors: ["#222222", "#CC0000", "#8B4513", "#50C878", "#8FBC8F", "#F5DEB3", "#FFB6C1"] },
+  { name: "22", colors: ["#222222", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "23", colors: ["#00008B", "#222222", "#CC0000", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "24", colors: ["#4169E1", "#222222", "#FF69B4", "#00CED1", "#F5F5F5"] },
+  { name: "25", colors: ["#222222", "#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#C8A2C8"] },
+  { name: "26", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "27", colors: ["#4169E1", "#FF8C00", "#8B008B", "#FFD700"] },
+  { name: "28", colors: ["#228B22", "#FF69B4", "#F5F5F5", "#8B4513", "#F5DEB3"] },
+  { name: "29", colors: ["#00008B", "#222222", "#FFD700", "#F5F5F5"] },
+  { name: "30", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1"] },
+  { name: "31", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1"] },
+  { name: "32", colors: ["#00008B", "#228B22", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "33", colors: ["#FF8C00", "#00CED1", "#50C878", "#C8A2C8"] },
+  { name: "34", colors: ["#FF8C00", "#00CED1", "#50C878", "#C8A2C8"] },
+  { name: "35", colors: ["#00008B", "#222222", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878"] },
+  { name: "36", colors: ["#222222", "#FF69B4", "#00CED1", "#FFD700"] },
+  { name: "37", colors: ["#222222", "#FF69B4", "#CC0000", "#FFD700", "#F5F5F5"] },
+  { name: "38", colors: ["#228B22", "#FF8C00", "#CC0000", "#F5F5F5"] },
+  { name: "39", colors: ["#222222", "#FF69B4", "#00CED1", "#FFD700"] },
+  { name: "40", colors: ["#4169E1", "#222222", "#FF69B4", "#8B008B", "#FFD700"] },
+  { name: "41", colors: ["#228B22", "#FF8C00", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "42", colors: ["#00008B", "#222222", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "43", colors: ["#228B22", "#FF8C00", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "44", colors: ["#FF69B4", "#CC0000", "#F5F5F5"] },
+  { name: "45", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "46", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5"] },
+  { name: "47", colors: ["#00008B", "#222222", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#50C878"] },
+  { name: "48", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "49", colors: ["#4169E1", "#222222", "#00CED1", "#F5F5F5"] },
+  { name: "50", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5"] },
+  { name: "51", colors: ["#00008B", "#222222", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#50C878"] },
+  { name: "52", colors: ["#4169E1", "#228B22", "#FF8C00", "#CC0000", "#FFD700", "#C8A2C8"] },
+  { name: "53", colors: ["#4169E1", "#222222", "#FF69B4", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "54", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#FA8072"] },
+  { name: "55", colors: ["#00008B", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#4B0082"] },
+  { name: "56", colors: ["#222222", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "57", colors: ["#4169E1", "#222222", "#8B008B", "#FFD700", "#F5F5F5"] },
+  { name: "58", colors: ["#228B22", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "59", colors: ["#4169E1", "#FFD700", "#50C878", "#FA8072"] },
+  { name: "60", colors: ["#222222", "#FF8C00", "#FF69B4", "#F5DEB3"] },
+  { name: "61", colors: ["#222222", "#FF69B4", "#CC0000", "#F5F5F5", "#8FBC8F"] },
+  { name: "62", colors: ["#4169E1", "#228B22", "#FF69B4", "#8B008B", "#CC0000", "#FFD700"] },
+  { name: "63", colors: ["#FF69B4", "#CC0000", "#F5F5F5"] },
+  { name: "64", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "65", colors: ["#4169E1", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5"] },
+  { name: "66", colors: ["#4169E1", "#228B22", "#FF69B4", "#8B008B", "#FFD700"] },
+  { name: "67", colors: ["#4169E1", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#50C878"] },
+  { name: "68", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#C8A2C8"] },
+  { name: "69", colors: ["#00008B", "#222222", "#FF69B4", "#CC0000", "#F5F5F5", "#C8A2C8"] },
+  { name: "70", colors: ["#00008B", "#FF8C00", "#FF69B4", "#8B008B", "#CC0000", "#00CED1", "#FFD700"] },
+  { name: "71", colors: ["#00008B", "#222222", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "72", colors: ["#4169E1", "#222222", "#FF69B4", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "73", colors: ["#4169E1", "#222222", "#FF69B4", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "74", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "75", colors: ["#8B008B", "#00CED1", "#FFD700", "#50C878", "#FA8072"] },
+  { name: "76", colors: ["#222222", "#F5F5F5"] },
+  { name: "77", colors: ["#222222", "#228B22", "#CC0000", "#FFD700", "#F5F5F5"] },
+  { name: "78", colors: ["#222222", "#FF8C00", "#CC0000", "#FFD700", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "79", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#F5F5F5"] },
+  { name: "80", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#F5DEB3"] },
+  { name: "81", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#00CED1", "#FFD700"] },
+  { name: "82", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#F5DEB3"] },
+  { name: "83", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#FFD700", "#F5F5F5"] },
+  { name: "84", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5"] },
+  { name: "85", colors: ["#222222", "#FF8C00", "#F5F5F5", "#FFB6C1", "#FFAA5C", "#800020"] },
+  { name: "86", colors: ["#222222", "#228B22", "#FF8C00", "#FFD700", "#F5F5F5", "#8B4513", "#50C878", "#FFB6C1"] },
+  { name: "87", colors: ["#00008B", "#222222", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878"] },
+  { name: "88", colors: ["#222222", "#FF8C00", "#8B008B", "#CC0000", "#FFD700", "#F5F5F5", "#FFB6C1"] },
+  { name: "89", colors: ["#222222", "#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#50C878", "#F5DEB3"] },
+  { name: "90", colors: ["#4169E1", "#00008B", "#222222", "#228B22", "#FF69B4", "#00CED1", "#FFD700"] },
+  { name: "91", colors: ["#00008B", "#228B22", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "92", colors: ["#222222", "#FF69B4", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "93", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5"] },
+  { name: "94", colors: ["#00008B", "#222222", "#228B22", "#FFD700", "#F5F5F5", "#50C878", "#8FBC8F", "#808080"] },
+  { name: "95", colors: ["#00008B", "#222222", "#8B008B", "#FFD700", "#FF007F"] },
+  { name: "96", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5", "#C8A2C8"] },
+  { name: "97", colors: ["#222222", "#F5F5F5", "#50C878", "#E6E6FA", "#CB4154", "#FFAA5C"] },
+  { name: "98", colors: ["#228B22", "#FF69B4", "#F5F5F5", "#8B4513", "#F5DEB3"] },
+  { name: "99", colors: ["#4169E1", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#50C878"] },
+  { name: "100", colors: ["#222222", "#CC0000", "#8B4513", "#50C878", "#8FBC8F", "#F5DEB3", "#FFB6C1"] },
+  { name: "101", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#C8A2C8"] },
+  { name: "102", colors: ["#00008B", "#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8FBC8F", "#E6E6FA"] },
+  { name: "103", colors: ["#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5", "#8B4513", "#006400", "#FFAA5C"] },
+  { name: "104", colors: ["#222222", "#FF69B4", "#8B008B", "#CC0000", "#F5DEB3", "#808080"] },
+  { name: "105", colors: ["#228B22", "#CC0000", "#F5F5F5", "#8B4513", "#C8A2C8", "#404040"] },
+  { name: "106", colors: ["#222222", "#F5F5F5", "#006400", "#8FBC8F"] },
+  { name: "107", colors: ["#228B22", "#CC0000", "#F5F5F5", "#8B4513", "#C8A2C8", "#404040"] },
+  { name: "108", colors: ["#4169E1", "#CC0000", "#F5F5F5", "#006400", "#8FBC8F", "#404040", "#FFB6C1"] },
+  { name: "109", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#F5DEB3", "#FFB6C1"] },
+  { name: "110", colors: ["#4169E1", "#222222", "#8B4513", "#8FBC8F", "#F5DEB3", "#FF007F"] },
+  { name: "111", colors: ["#4169E1", "#228B22", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#50C878"] },
+  { name: "112", colors: ["#222222", "#FF69B4", "#8B008B", "#CC0000", "#F5DEB3", "#808080"] },
+  { name: "113", colors: ["#4169E1", "#222222", "#228B22", "#CC0000", "#FFD700", "#8B4513", "#F5DEB3"] },
+  { name: "114", colors: ["#222222", "#FF8C00", "#CC0000", "#FFD700", "#F5F5F5", "#8FBC8F", "#FFB6C1"] },
+  { name: "115", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#CC4E36", "#F5DEB3"] },
+  { name: "116", colors: ["#222222", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#CB4154"] },
+  { name: "117", colors: ["#228B22", "#CC0000", "#00CED1", "#FFD700", "#50C878", "#4B0082", "#FFB6C1"] },
+  { name: "118", colors: ["#222222", "#F5F5F5", "#006400", "#8FBC8F"] },
+  { name: "119", colors: ["#222222", "#F5F5F5", "#F5DEB3", "#808080", "#FF007F", "#FFB6C1"] },
+  { name: "120", colors: ["#4169E1", "#222222", "#8B008B", "#FFD700", "#F5F5F5"] },
+  { name: "121", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#F5DEB3", "#FFB6C1"] },
+  { name: "122", colors: ["#222222", "#228B22", "#FF69B4", "#CC0000"] },
+  { name: "123", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#006400"] },
+  { name: "124", colors: ["#00008B", "#222222", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F", "#FFB6C1"] },
+  { name: "125", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#CC0000", "#00CED1", "#FFD700"] },
+  { name: "126", colors: ["#00008B", "#228B22", "#FF8C00", "#CC0000", "#FFD700", "#E6E6FA", "#4B0082", "#FF007F"] },
+  { name: "127", colors: ["#222222", "#F5F5F5", "#F5DEB3", "#808080", "#FF007F", "#FFB6C1"] },
+  { name: "128", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#E6E6FA", "#FF007F", "#FFB6C1"] },
+  { name: "129", colors: ["#FF8C00", "#00CED1", "#FFD700", "#50C878", "#4B0082"] },
+  { name: "130", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#F5F5F5", "#006400", "#CC4E36", "#F5DEB3"] },
+  { name: "131", colors: ["#222222", "#F5DEB3", "#808080", "#4B0082"] },
+  { name: "132", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#F5DEB3", "#FFB6C1"] },
+  { name: "133", colors: ["#00CED1", "#F5F5F5", "#50C878", "#8FBC8F", "#808080", "#4B0082", "#FF007F"] },
+  { name: "134", colors: ["#222222", "#FF69B4", "#CC0000", "#00CED1", "#F5F5F5", "#4B0082", "#FFB6C1"] },
+  { name: "135", colors: ["#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#F5DEB3", "#4B0082", "#FFB6C1"] },
+  { name: "136", colors: ["#222222", "#FF8C00", "#FFD700", "#50C878", "#808080", "#404040", "#4B0082"] },
+  { name: "137", colors: ["#4169E1", "#222222", "#FF8C00", "#00CED1", "#FFD700"] },
+  { name: "138", colors: ["#4169E1", "#FF69B4", "#CC0000", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "139", colors: ["#4169E1", "#00008B", "#222222", "#CC0000", "#F5F5F5", "#FFB6C1"] },
+  { name: "140", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#F5F5F5", "#006400", "#E6E6FA"] },
+  { name: "141", colors: ["#222222", "#FF8C00", "#00CED1", "#FFD700", "#808080", "#FFB6C1"] },
+  { name: "142", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#CC4E36", "#F5DEB3"] },
+  { name: "143", colors: ["#00008B", "#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#FFB6C1"] },
+  { name: "144", colors: ["#00008B", "#222222", "#8B008B", "#FFD700", "#FF007F"] },
+  { name: "145", colors: ["#00008B", "#222222", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#808080"] },
+  { name: "146", colors: ["#222222", "#F5F5F5", "#8B4513", "#006400", "#FA8072", "#E6E6FA", "#FFAA5C"] },
+  { name: "147", colors: ["#4169E1", "#00008B", "#222222", "#FF69B4", "#FFD700", "#F5F5F5", "#FA8072", "#E6E6FA"] },
+  { name: "148", colors: ["#222222", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#CB4154", "#FFB6C1"] },
+  { name: "149", colors: ["#222222", "#FF8C00", "#CC0000", "#FFD700", "#8B4513", "#808080", "#FFB6C1"] },
+  { name: "150", colors: ["#00008B", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "151", colors: ["#228B22", "#FF8C00", "#CC0000", "#FFD700", "#E6E6FA", "#4B0082"] },
+  { name: "152", colors: ["#222222", "#F5F5F5", "#50C878", "#C8A2C8", "#FF007F"] },
+  { name: "153", colors: ["#222222", "#8B008B", "#F5F5F5", "#8B4513", "#006400", "#FF007F"] },
+  { name: "154", colors: ["#FF8C00", "#8B008B", "#CC0000", "#F5F5F5", "#404040", "#FFB6C1"] },
+  { name: "155", colors: ["#222222", "#FF69B4", "#FFD700", "#F5F5F5", "#8B4513"] },
+  { name: "156", colors: ["#222222", "#228B22", "#CC0000", "#00CED1", "#F5F5F5", "#50C878", "#4B0082", "#FF007F"] },
+  { name: "157", colors: ["#4169E1", "#222222", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#006400", "#8FBC8F"] },
+  { name: "158", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#8B4513", "#50C878", "#808080"] },
+  { name: "159", colors: ["#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#4B0082", "#FFB6C1"] },
+  { name: "160", colors: ["#228B22", "#FFD700", "#F5F5F5", "#8B4513"] },
+  { name: "161", colors: ["#CC0000", "#F5F5F5", "#F5DEB3"] },
+  { name: "162", colors: ["#4169E1", "#222222", "#228B22", "#CC0000", "#FFD700", "#F5F5F5"] },
+  { name: "163", colors: ["#222222", "#FF8C00", "#CC0000", "#8FBC8F", "#FF007F", "#FFB6C1"] },
+  { name: "164", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#8B008B", "#00CED1", "#FFB6C1"] },
+  { name: "165", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#50C878", "#808080", "#4B0082", "#FF007F"] },
+  { name: "166", colors: ["#4169E1", "#222222", "#228B22", "#F5F5F5", "#8B4513", "#006400", "#F5DEB3", "#404040"] },
+  { name: "167", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#50C878", "#8FBC8F", "#F5DEB3", "#4B0082"] },
+  { name: "168", colors: ["#228B22", "#FF8C00", "#CC0000", "#8B4513", "#4B0082"] },
+  { name: "169", colors: ["#00008B", "#FF69B4", "#00CED1", "#F5F5F5", "#C8A2C8", "#F5DEB3", "#4B0082"] },
+  { name: "170", colors: ["#222222", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#8FBC8F", "#FFAA5C"] },
+  { name: "171", colors: ["#222222", "#F5F5F5", "#50C878", "#FA8072", "#CC4E36", "#CB4154", "#4B0082", "#FFB6C1"] },
+  { name: "172", colors: ["#222222", "#CC0000", "#8B4513", "#006400", "#F5DEB3"] },
+  { name: "173", colors: ["#222222", "#FFD700", "#F5F5F5", "#F5DEB3", "#CB4154", "#FFB6C1"] },
+  { name: "174", colors: ["#222222", "#FF8C00", "#F5F5F5", "#CC4E36", "#404040", "#4B0082", "#FFB6C1"] },
+  { name: "175", colors: ["#222222", "#FF69B4", "#CC0000", "#F5F5F5", "#8B4513", "#CB4154", "#FFAA5C"] },
+  { name: "176", colors: ["#222222", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#E6E6FA"] },
+  { name: "177", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#8B4513", "#CB4154", "#4B0082"] },
+  { name: "178", colors: ["#222222", "#00CED1", "#F5F5F5", "#8B4513", "#CC4E36", "#404040"] },
+  { name: "179", colors: ["#00CED1", "#F5F5F5", "#8B4513", "#FFB6C1"] },
+  { name: "180", colors: ["#4169E1", "#222222", "#FF8C00", "#F5F5F5"] },
+  { name: "181", colors: ["#222222", "#CC0000", "#F5F5F5", "#50C878", "#C8A2C8", "#E6E6FA", "#404040", "#FFAA5C"] },
+  { name: "182", colors: ["#222222", "#CC0000", "#FFD700", "#F5F5F5", "#8B4513", "#FA8072", "#404040"] },
+  { name: "183", colors: ["#222222", "#00CED1", "#F5F5F5", "#C8A2C8", "#E6E6FA", "#404040"] },
+  { name: "184", colors: ["#00008B", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "185", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#FFD700", "#E6E6FA"] },
+  { name: "186", colors: ["#222222", "#8B008B", "#FFD700", "#F5F5F5", "#50C878", "#CC4E36", "#404040", "#FFB6C1"] },
+  { name: "187", colors: ["#4169E1", "#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "188", colors: ["#222222", "#228B22", "#8B008B", "#00CED1", "#FFD700", "#006400", "#FFB6C1"] },
+  { name: "189", colors: ["#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#4B0082"] },
+  { name: "190", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#50C878", "#808080", "#4B0082", "#5F9EA0"] },
+  { name: "191", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "192", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5"] },
+  { name: "193", colors: ["#FF8C00", "#CC0000", "#F5F5F5", "#4B0082", "#FFB6C1", "#FFAA5C", "#5F9EA0"] },
+  { name: "194", colors: ["#4169E1", "#222222", "#FF8C00", "#00CED1", "#8FBC8F"] },
+  { name: "195", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#8B4513", "#50C878", "#CC4E36", "#800020"] },
+  { name: "196", colors: ["#222222", "#228B22", "#00CED1", "#006400", "#8FBC8F", "#CC4E36", "#C4A265"] },
+  { name: "197", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#4B0082", "#FFB6C1", "#5F9EA0"] },
+  { name: "198", colors: ["#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#808080", "#FFB6C1"] },
+  { name: "199", colors: ["#222222", "#CC0000", "#F5F5F5", "#C8A2C8", "#F5DEB3", "#FF007F", "#5F9EA0", "#9D00FF"] },
+  { name: "200", colors: ["#00008B", "#222222", "#8B008B", "#00CED1", "#F5F5F5", "#50C878", "#8FBC8F", "#FFAA5C"] },
+  { name: "201", colors: ["#222222", "#FF8C00", "#F5F5F5", "#8B4513", "#E6E6FA", "#CC4E36", "#4B0082", "#FFB6C1", "#FFAA5C"] },
+  { name: "202", colors: ["#222222", "#228B22", "#FF8C00", "#8B008B", "#FFD700", "#F5F5F5", "#006400"] },
+  { name: "203", colors: ["#00008B", "#222222", "#FF8C00", "#FF69B4", "#FFD700", "#F5F5F5", "#8FBC8F", "#CC4E36"] },
+  { name: "204", colors: ["#4169E1", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#8FBC8F", "#4B0082"] },
+  { name: "205", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#808080", "#FFAA5C"] },
+  { name: "206", colors: ["#222222", "#FF8C00", "#FF69B4", "#00CED1", "#F5F5F5", "#FA8072", "#800020"] },
+  { name: "207", colors: ["#4169E1", "#FF8C00", "#F5F5F5", "#F5DEB3", "#800020"] },
+  { name: "208", colors: ["#00008B", "#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#006400", "#E6E6FA", "#4B0082", "#800020"] },
+  { name: "209", colors: ["#222222", "#FF8C00", "#FFD700", "#F5F5F5", "#E6E6FA", "#4B0082", "#FFB6C1"] },
+  { name: "210", colors: ["#228B22", "#00CED1", "#F5F5F5", "#006400", "#FA8072", "#E6E6FA", "#404040", "#FFB6C1", "#5F9EA0"] },
+  { name: "211", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#4B0082", "#FFB6C1"] },
+  { name: "212", colors: ["#222222", "#00CED1", "#F5F5F5", "#E6E6FA", "#FFB6C1", "#5F9EA0", "#9D00FF"] },
+  { name: "213", colors: ["#222222", "#00CED1", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#CC4E36", "#FFAA5C"] },
+  { name: "214", colors: ["#00008B", "#222222", "#FF8C00", "#8B008B", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#C8A2C8", "#4B0082", "#800020"] },
+  { name: "215", colors: ["#222222", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#CB4154"] },
+  { name: "216", colors: ["#222222", "#228B22", "#FF8C00", "#FF69B4", "#00CED1", "#FFD700"] },
+  { name: "217", colors: ["#222222", "#228B22", "#00CED1", "#8B4513", "#006400", "#8FBC8F", "#F5DEB3", "#FFAA5C"] },
+  { name: "218", colors: ["#4169E1", "#222222", "#00CED1", "#F5F5F5", "#8B4513", "#50C878", "#F5DEB3", "#C4A265"] },
+  { name: "219", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#50C878", "#8FBC8F", "#CB4154"] },
+  { name: "220", colors: ["#00008B", "#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#006400", "#FA8072", "#4B0082", "#9D00FF"] },
+  { name: "221", colors: ["#228B22", "#00CED1", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#404040", "#C4A265"] },
+  { name: "222", colors: ["#4169E1", "#222222", "#228B22", "#FF69B4", "#CC0000", "#F5F5F5", "#006400", "#FA8072"] },
+  { name: "223", colors: ["#4169E1", "#228B22", "#F5F5F5", "#8B4513", "#F5DEB3", "#CB4154", "#5F9EA0"] },
+  { name: "224", colors: ["#FF8C00"] },
+  { name: "225", colors: ["#222222", "#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F", "#FFB6C1", "#9D00FF"] },
+  { name: "226", colors: ["#222222", "#228B22", "#F5F5F5", "#50C878", "#CC4E36", "#4B0082", "#FFAA5C", "#8B6914"] },
+  { name: "227", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#F5DEB3"] },
+  { name: "228", colors: ["#222222", "#FF69B4", "#00CED1", "#F5F5F5", "#FFB6C1", "#800020", "#C4A265", "#8B6914"] },
+  { name: "229", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#F5F5F5", "#006400", "#FFB6C1", "#FFAA5C", "#8B6914"] },
+  { name: "230", colors: ["#4169E1", "#00008B", "#222222", "#CC0000", "#00CED1", "#F5F5F5", "#006400", "#FFAA5C"] },
+  { name: "231", colors: ["#222222", "#F5F5F5", "#F5DEB3", "#4B0082", "#FFB6C1", "#800020", "#5F9EA0", "#9D00FF"] },
+  { name: "232", colors: ["#FF8C00", "#FFD700", "#F5F5F5", "#E6E6FA", "#4B0082", "#FF007F", "#5F9EA0", "#9D00FF"] },
+  { name: "233", colors: ["#00008B", "#222222", "#228B22", "#CC0000", "#F5F5F5", "#006400", "#F5DEB3", "#8B6914"] },
+  { name: "234", colors: ["#222222", "#CC0000", "#F5F5F5", "#006400", "#FFAA5C", "#8B6914"] },
+  { name: "235", colors: ["#4169E1", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#808080"] },
+  { name: "236", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#8FBC8F", "#4B0082"] },
+  { name: "237", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#F5DEB3", "#800020"] },
+  { name: "238", colors: ["#4169E1", "#222222", "#F5F5F5", "#006400", "#FA8072", "#F5DEB3", "#800020", "#C4A265"] },
+  { name: "239", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#CC4E36", "#FFB6C1"] },
+  { name: "240", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#FF007F", "#FFB6C1"] },
+  { name: "241", colors: ["#222222", "#8B4513", "#50C878", "#F5DEB3", "#CB4154", "#808080"] },
+  { name: "242", colors: ["#222222", "#228B22", "#FF69B4", "#00CED1"] },
+  { name: "243", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#F5DEB3", "#4B0082", "#5F9EA0"] },
+  { name: "244", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#006400", "#8FBC8F", "#800020"] },
+  { name: "245", colors: ["#4169E1", "#222222", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#FA8072", "#E6E6FA"] },
+  { name: "246", colors: ["#00008B", "#FFD700", "#F5F5F5", "#006400", "#404040"] },
+  { name: "247", colors: ["#222222", "#FF8C00", "#F5F5F5", "#8B4513", "#006400", "#CC4E36", "#F5DEB3", "#800020"] },
+  { name: "248", colors: ["#228B22", "#FF69B4", "#8B008B", "#CC0000", "#FFD700", "#F5F5F5", "#50C878", "#E6E6FA", "#404040"] },
+  { name: "249", colors: ["#222222", "#F5F5F5", "#808080", "#FFAA5C", "#8B6914"] },
+  { name: "250", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#50C878", "#FA8072", "#800020"] },
+  { name: "251", colors: ["#222222", "#FF8C00", "#FF69B4", "#CC0000", "#FFD700", "#F5F5F5", "#4B0082"] },
+  { name: "252", colors: ["#4169E1", "#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#9D00FF"] },
+  { name: "253", colors: ["#222222", "#228B22", "#8B008B", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F"] },
+  { name: "254", colors: ["#222222", "#228B22", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#800020"] },
+  { name: "255", colors: ["#222222", "#CC0000", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#FFB6C1", "#9D00FF"] },
+  { name: "256", colors: ["#228B22", "#00CED1", "#FFD700", "#F5F5F5", "#FF007F", "#FFB6C1"] },
+  { name: "257", colors: ["#222222", "#FF8C00", "#8B008B", "#00CED1", "#F5F5F5", "#FFB6C1", "#FFAA5C", "#8B6914"] },
+  { name: "258", colors: ["#222222", "#FF8C00", "#F5F5F5", "#FFB6C1", "#FFAA5C", "#800020"] },
+  { name: "259", colors: ["#4169E1", "#222222", "#FF8C00", "#FF69B4", "#F5F5F5", "#8B4513", "#8FBC8F", "#F5DEB3"] },
+  { name: "260", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#C4A265"] },
+  { name: "261", colors: ["#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#C8A2C8"] },
+  { name: "262", colors: ["#222222", "#CC0000", "#F5F5F5", "#006400", "#50C878", "#FFAA5C"] },
+  { name: "263", colors: ["#4169E1", "#00CED1", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "264", colors: ["#222222", "#228B22", "#F5F5F5", "#006400", "#8FBC8F", "#FA8072"] },
+  { name: "265", colors: ["#4169E1", "#222222", "#FF8C00", "#FFD700", "#8B4513", "#006400", "#808080"] },
+  { name: "266", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#8B4513", "#006400", "#FFAA5C"] },
+  { name: "267", colors: ["#222222", "#FF8C00", "#CC0000", "#4B0082", "#FF007F", "#FFB6C1"] },
+  { name: "268", colors: ["#222222", "#228B22", "#CC0000", "#00CED1", "#F5F5F5", "#8B4513", "#FF007F", "#FFB6C1", "#FFAA5C"] },
+  { name: "269", colors: ["#222222", "#00CED1", "#F5F5F5", "#FF007F", "#FFB6C1"] },
+  { name: "270", colors: ["#222222", "#FF8C00", "#00CED1", "#F5F5F5", "#C8A2C8", "#CC4E36", "#4B0082"] },
+  { name: "271", colors: ["#4169E1", "#FF8C00", "#F5F5F5", "#FF007F", "#FFB6C1", "#800020"] },
+  { name: "272", colors: ["#222222", "#8B008B", "#50C878", "#8FBC8F", "#CB4154", "#808080"] },
+  { name: "273", colors: ["#228B22", "#F5F5F5", "#006400", "#FFAA5C", "#8B6914"] },
+  { name: "274", colors: ["#FF8C00", "#F5F5F5", "#8B4513", "#C8A2C8", "#8FBC8F", "#FA8072", "#FFAA5C"] },
+  { name: "275", colors: ["#4169E1", "#222222", "#CC0000", "#F5F5F5", "#006400", "#E6E6FA"] },
+  { name: "276", colors: ["#4169E1", "#FFD700", "#50C878", "#FF007F", "#9D00FF"] },
+  { name: "277", colors: ["#00008B", "#222222", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8FBC8F"] },
+  { name: "278", colors: ["#4169E1", "#CC0000", "#FFD700", "#F5F5F5", "#006400"] },
+  { name: "279", colors: ["#4169E1", "#00CED1", "#F5F5F5", "#8B4513", "#006400"] },
+  { name: "280", colors: ["#00008B", "#228B22", "#FF69B4", "#00CED1", "#F5F5F5", "#006400", "#FFB6C1"] },
+  { name: "281", colors: ["#FFD700", "#F5F5F5", "#006400", "#8B6914"] },
+  { name: "282", colors: ["#00008B", "#222222", "#FF8C00", "#8B008B", "#00CED1", "#F5F5F5", "#4B0082", "#FFB6C1", "#FFAA5C"] },
+  { name: "283", colors: ["#222222", "#228B22", "#00CED1", "#F5F5F5", "#C8A2C8", "#4B0082", "#9D00FF"] },
+  { name: "284", colors: ["#4169E1", "#00008B", "#222222", "#228B22", "#00CED1", "#F5F5F5", "#F5DEB3", "#C4A265"] },
+  { name: "285", colors: ["#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#006400", "#FFB6C1", "#9D00FF"] },
+  { name: "286", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#FFB6C1", "#9D00FF"] },
+  { name: "287", colors: [] },
+  { name: "288", colors: ["#222222", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513"] },
+  { name: "289", colors: ["#00008B", "#222222", "#00CED1", "#F5F5F5", "#50C878", "#FA8072", "#4B0082", "#800020", "#5F9EA0", "#C4A265"] },
+  { name: "290", colors: ["#00008B", "#222222", "#228B22", "#FF8C00", "#CC0000", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#006400", "#4B0082", "#FFB6C1", "#9D00FF"] },
+  { name: "291", colors: [] },
+  { name: "292", colors: ["#222222", "#FFD700", "#F5F5F5", "#8B4513", "#4B0082", "#FFB6C1", "#C4A265"] },
+  { name: "293", colors: ["#222222", "#228B22", "#FF8C00", "#FFD700", "#F5F5F5", "#8B4513"] },
+  { name: "294", colors: ["#228B22", "#FF8C00", "#F5F5F5", "#8B4513", "#006400", "#8FBC8F", "#F5DEB3", "#CB4154"] },
+  { name: "295", colors: ["#222222", "#228B22", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#8B4513", "#50C878"] },
+  { name: "296", colors: ["#222222", "#00CED1", "#F5F5F5", "#F5DEB3", "#4B0082", "#FF007F", "#FFB6C1", "#C4A265", "#9D00FF"] },
+  { name: "297", colors: ["#00008B", "#222222", "#FF69B4", "#00CED1", "#F5F5F5", "#CC4E36"] },
+  { name: "298", colors: ["#222222", "#00CED1", "#F5F5F5", "#E6E6FA", "#FF007F", "#FFB6C1", "#9D00FF"] },
+  { name: "299", colors: ["#222222", "#FF8C00", "#8B008B", "#CC0000", "#FFD700", "#F5F5F5", "#F5DEB3", "#FFB6C1"] },
+  { name: "300", colors: ["#4169E1", "#FF69B4", "#00CED1", "#FFD700", "#F5F5F5", "#50C878", "#404040"] },
+  { name: "301", colors: ["#222222", "#FF8C00", "#FF69B4", "#F5F5F5", "#8B4513", "#F5DEB3", "#4B0082", "#C4A265", "#6E7F80"] },
+  { name: "302", colors: ["#222222", "#F5F5F5", "#8B4513", "#F5DEB3", "#CB4154", "#C4A265", "#6E7F80"] },
+  { name: "303", colors: ["#4169E1", "#222222", "#FF8C00", "#00CED1", "#FFD700", "#F5F5F5", "#800020", "#9D00FF"] },
+  { name: "304", colors: ["#222222", "#F5F5F5", "#8FBC8F", "#FFB6C1", "#5F9EA0", "#6E7F80"] },
+  { name: "305", colors: [] },
+  { name: "306", colors: ["#4169E1", "#222222", "#228B22", "#FF8C00", "#FFD700", "#F5F5F5", "#006400", "#50C878", "#800020"] }
 ];
 
 // ============================================================
