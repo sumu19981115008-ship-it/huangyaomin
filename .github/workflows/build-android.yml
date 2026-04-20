@@ -46,7 +46,7 @@ jobs:
       - name: 设置 Java 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: 授权 Gradle 执行权限
