@@ -1,0 +1,31 @@
+{
+  "boardSize": 20,
+  "boardWidth": 20,
+  "boardHeight": 20,
+  "entities": [
+    {
+      "type": "PixelBlock",
+      "color": "#FFDD00",
+      "cells": [
+        {"x":10, "y":15},
+        {"x":9,  "y":14}, {"x":10, "y":14}, {"x":11, "y":14},
+        {"x":7,  "y":13}, {"x":8,  "y":13}, {"x":9,  "y":13}, {"x":10, "y":13},
+        {"x":11, "y":13}, {"x":12, "y":13}, {"x":13, "y":13},
+        {"x":9,  "y":12}, {"x":10, "y":12}, {"x":11, "y":12},
+        {"x":7,  "y":11}, {"x":8,  "y":11},
+                                              {"x":12, "y":11}, {"x":13, "y":11},
+        {"x":7,  "y":10}, {"x":8,  "y":10},
+                                              {"x":12, "y":10}, {"x":13, "y":10}
+      ],
+      "pixelCount": 0,
+      "colorRanges": []
+    }
+  ],
+  "numberOfLanes": 2,
+  "initialTanks": [
+    {"color":"#FFDD00","ammo":11,"lane":0,"position":0,"isLinked":false,"linkedGroupId":-1,"isMystery":false,"isLock":false,"stoneData":{"amount":0},"isHammer":false},
+    {"color":"#FFDD00","ammo":11,"lane":1,"position":0,"isLinked":false,"linkedGroupId":-1,"isMystery":false,"isLock":false,"stoneData":{"amount":0},"isHammer":false}
+  ],
+  "shooterPipes": [],
+  "maxTanksOnConveyor": 5
+}
