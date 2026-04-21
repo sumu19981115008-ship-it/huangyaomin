@@ -22,6 +22,7 @@ export class DevTools {
     this._onJump     = onJump;
     this._panel      = null;
     this._visible    = false;
+    this._zones      = [];
 
     this._build();
   }
@@ -41,6 +42,12 @@ export class DevTools {
     // 面板容器（默认隐藏）
     this._panel = this._scene.add.container(0, 0).setDepth(99).setVisible(false);
     this._buildPanel();
+
+    // 遮罩：面板关闭时覆盖在 zone 上方，吃掉所有穿透点击
+    const panelW = 200, panelH = 320;
+    const mx = VW - panelW - 8, my = 28;
+    this._mask = this._scene.add.zone(mx, my, panelW, panelH)
+      .setOrigin(0).setDepth(102).setInteractive();
   }
 
   _buildPanel() {
@@ -118,6 +125,7 @@ export class DevTools {
       });
 
       this._panel.add([bg, tx]);
+      this._zones.push(zone);
       this._gridBtns.push({ bg, tx, zone, bx, by, w: btnW, h: btnH });
     }
 
@@ -182,6 +190,7 @@ export class DevTools {
     zone.on('pointerover',  () => { bg.clear(); bg.fillStyle(0x334466,1); bg.fillRoundedRect(x,y,width,h,4); });
     zone.on('pointerout',   () => { bg.clear(); bg.fillStyle(0x223344,1); bg.fillRoundedRect(x,y,width,h,4); });
 
+    this._zones.push(zone);
     this._panel.add([bg, tx]);
   }
 
@@ -194,6 +203,13 @@ export class DevTools {
   _toggle() {
     this._visible = !this._visible;
     this._panel.setVisible(this._visible);
+    for (const z of this._zones) {
+      if (this._visible) z.setInteractive({ useHandCursor: true });
+      else               z.setDepth(-1);
+    }
+    // 遮罩：面板关闭时启用（吃掉穿透点击），面板打开时禁用
+    if (this._visible) this._mask.disableInteractive();
+    else               this._mask.setInteractive();
     if (this._visible) {
       this._refreshCurrent(this._cur ?? 0);
       this._refreshGrid();

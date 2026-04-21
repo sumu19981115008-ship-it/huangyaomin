@@ -1,34 +1,32 @@
-// 棋盘尺寸
-export const GW   = 20;
-export const GH   = 20;
-export const CELL = 18;
-
-export const CW = GW * CELL;   // 360
-export const CH = GH * CELL;   // 360
-
-// 轨道路径
-export const SIDE_LEN   = CW;
-export const TOTAL_DIST = SIDE_LEN * 4;
-
-// 游戏规则
+// 游戏规则（固定）
 export const TRACK_CAP    = 5;
 export const BUFFER_CAP   = 5;
 export const TURRET_SPEED = 3;
 export const BULLET_SPEED = 14;
 
+// 动态布局范围
+export const CELL_MIN = 6;
+export const CELL_MAX = 18;
+
 // 视口
 export const VW = 480;
-export const VH = 900;
+export const VH = 920;
 
-// 布局
-export const CANVAS_X  = 60;
-export const CANVAS_Y  = 90;
+// 轨道间距
 export const TRACK_GAP = 22;
-export const BUFFER_Y  = 510;
-export const QUEUE_Y   = 590;
 
 // 方向枚举
 export const SIDE = Object.freeze({ BOTTOM: 0, RIGHT: 1, TOP: 2, LEFT: 3 });
+
+// 动态布局对象（每关 loadLevel 时由 GameLogic 重新写入）
+export const G = {
+  GW: 20, GH: 20, CELL: 18,
+  CW: 360, CH: 360,
+  CANVAS_X: 60, CANVAS_Y: 90,
+  ITEM_BAR_Y: 524, BUFFER_Y: 654, QUEUE_Y: 744,
+  LEN_BOTTOM: 360, LEN_RIGHT: 360, LEN_TOP: 360, LEN_LEFT: 360,
+  TOTAL_DIST: 1440,
+};
 
 // 颜色
 export const C_BG         = 0x0d0d1a;
@@ -43,4 +41,4 @@ export const BUFFER_COLORS = [
 ];
 
 // 可用关卡总数
-export const TOTAL_LEVELS = 304;
+export const TOTAL_LEVELS = 301;
