@@ -593,6 +593,7 @@ let currentCells   = [];
 let currentPalette = {};
 let generatedLevel = null;
 const excludedColors = new Set();
+let detectedPixelSize = 0; // 像素风检测到的元素尺寸（S px），0=未检测到
 
 // ════════════════════════════════════════════════
 // DOM 绑定
@@ -681,6 +682,7 @@ btnRmbg.onclick = async ()=>{
       alphaMask = { imageData: ac.getContext('2d').getImageData(0,0,ac.width,ac.height), w: ac.width, h: ac.height };
       clearEdgeCache();
       clearSrcPixelCache();
+      clearSmallImgCache();
 
       rmbgStatus.textContent = `✓ 抠图完成（${rmbgImg.width}×${rmbgImg.height}）`;
       rmbgStatus.style.color = '#44cc44';
@@ -873,6 +875,127 @@ function getSrcPixels(){
 function clearSrcPixelCache(){ _srcPixelCache = null; }
 
 // ════════════════════════════════════════════════
+// 评分专用小图缓存（最大边256px，固定计算量）
+// 所有 calcGridScore 调用都基于此图，速度提升10~20倍
+// ════════════════════════════════════════════════
+
+const SCORE_MAX_DIM = 256;
+let _smallImgCache = null;
+
+function getSmallImg(){
+  if(_smallImgCache) return _smallImgCache;
+  if(!srcImage) return null;
+  const scale = Math.min(1, SCORE_MAX_DIM / Math.max(srcImage.width, srcImage.height));
+  const sw = Math.max(1, Math.round(srcImage.width  * scale));
+  const sh = Math.max(1, Math.round(srcImage.height * scale));
+  const c = document.createElement('canvas');
+  c.width = sw; c.height = sh;
+  c.getContext('2d').drawImage(srcImage, 0, 0, sw, sh);
+  const id = c.getContext('2d').getImageData(0, 0, sw, sh);
+  _smallImgCache = { data: id.data, w: sw, h: sh };
+  return _smallImgCache;
+}
+
+function clearSmallImgCache(){ _smallImgCache = null; clearBlobCache(); }
+
+// ════════════════════════════════════════════════
+// 色块标签缓存
+// 将小图每个前景像素量化到色块标签（步长32，每通道8级，最多512种色块）
+// 评分时按色块独立计算，避免大色块掩盖小色块的对齐问题
+// ════════════════════════════════════════════════
+
+const BLOB_BINS = 8;               // 每通道 256/32 = 8 级
+const BLOB_MAX  = BLOB_BINS ** 3;  // 512
+
+let _blobCache = null;
+
+function getBlobLabels(){
+  if(_blobCache) return _blobCache;
+  const src = getSmallImg();
+  if(!src) return null;
+  const { data, w: IW, h: IH } = src;
+  const N = IW * IH;
+  const labels = new Int16Array(N).fill(-1); // -1 = 背景
+  for(let i = 0; i < N; i++){
+    if(data[i*4+3] < 128) continue;
+    const r = data[i*4]   >> 5; // 0~7
+    const g = data[i*4+1] >> 5;
+    const b = data[i*4+2] >> 5;
+    labels[i] = r * BLOB_BINS * BLOB_BINS + g * BLOB_BINS + b;
+  }
+  _blobCache = { labels, w: IW, h: IH };
+  return _blobCache;
+}
+
+function clearBlobCache(){ _blobCache = null; }
+
+// ════════════════════════════════════════════════
+// 像素风原生网格检测
+//
+// 像素风图片每隔固定 S 个原始像素是一个颜色均一的"元像素"块。
+// 遍历 S=1..min(W,H)/4，对每个 S 把图切成 S×S 小块，
+// 计算块内颜色均一度（主色像素/总像素），均一度 > PIXEL_ART_THRESH 说明找到原生尺寸。
+// 基于原图计算（不降采样），保证精度。
+// ════════════════════════════════════════════════
+
+const PIXEL_ART_THRESH = 0.92; // 块内均一度阈值，>92% 认为是像素风
+
+function detectPixelArtGrid(){
+  const src = getSrcPixels();
+  if(!src) return null;
+  const { data, w: IW, h: IH } = src;
+
+  const maxS = Math.floor(Math.min(IW, IH) / 4);
+
+  for(let S = 1; S <= maxS; S++){
+    // 图宽/高必须能被 S 整除（允许1像素误差）
+    if(IW % S > 1 || IH % S > 1) continue;
+
+    const bw = Math.round(IW / S); // 横向块数
+    const bh = Math.round(IH / S); // 纵向块数
+    if(bw < 4 || bh < 4 || bw > 100 || bh > 100) continue;
+
+    let totalPurity = 0, validBlocks = 0;
+
+    outer:
+    for(let by = 0; by < bh; by++){
+      for(let bx = 0; bx < bw; bx++){
+        const x0 = bx * S, x1 = x0 + S;
+        const y0 = by * S, y1 = y0 + S;
+
+        // 统计块内颜色（量化步长8，更严格）
+        const freq = {};
+        let fgCount = 0;
+        for(let py = y0; py < y1; py++){
+          for(let px = x0; px < x1; px++){
+            const idx = (py * IW + px) * 4;
+            if(data[idx+3] < 128) continue;
+            fgCount++;
+            const qr = data[idx]   >> 3; // 步长8，32级
+            const qg = data[idx+1] >> 3;
+            const qb = data[idx+2] >> 3;
+            const key = (qr << 10) | (qg << 5) | qb;
+            freq[key] = (freq[key] || 0) + 1;
+          }
+        }
+        if(fgCount < 1) continue;
+        const maxFreq = Math.max(...Object.values(freq));
+        const purity = maxFreq / fgCount;
+        totalPurity += purity;
+        validBlocks++;
+      }
+    }
+
+    if(validBlocks === 0) continue;
+    const avgPurity = totalPurity / validBlocks;
+    if(avgPurity >= PIXEL_ART_THRESH){
+      return { S, gw: bw, gh: bh, purity: avgPurity };
+    }
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════
 // 核心评分：单元格主色覆盖率
 //
 // 对每个格子采样原图全部像素（alpha>128 的前景像素），
@@ -883,53 +1006,94 @@ function clearSrcPixelCache(){ _srcPixelCache = null; }
 // ════════════════════════════════════════════════
 
 const COLOR_QUANT = 32; // RGB 量化步长
+// 量化桶数 = ceil(256/32)+1 = 9，总桶数 9^3 = 729，用整数数组代替 JS 对象
+const QUANT_BINS = Math.ceil(256 / COLOR_QUANT) + 1;
+const QUANT_TOTAL = QUANT_BINS * QUANT_BINS * QUANT_BINS;
+const _freqBuf = new Int32Array(QUANT_TOTAL); // 复用，避免 GC
+
+// 复用缓冲：每个色块累计（格内像素数，主色像素数）
+const _blobTotal   = new Float32Array(BLOB_MAX); // 该色块在所有格子中的前景像素总数
+const _blobDomSum  = new Float32Array(BLOB_MAX); // 该色块"落在主色格子"的像素数之和
+// 注：这里统计方式是：遍历所有格子，每格找主色，主色像素全部计入 _blobDomSum
 
 function calcGridScore(gw, gh){
-  const src = getSrcPixels();
-  if(!src) return null;
+  const blob = getBlobLabels();
+  if(!blob) return null;
+  const { labels, w: IW, h: IH } = blob;
 
-  const { data, w: IW, h: IH } = src;
-  const minCellPx = 4;
+  const minCellPx = 2;
 
-  let totalPurity = 0, validCells = 0;
+  // 遍历所有格子，统计每个色块被"对齐"的像素比例
+  // 对于一个格子：主色是格内出现最多的色块标签
+  // 主色的像素 → 贡献给该色块的 domSum
+  // 格内所有前景像素 → 贡献给对应色块的 total
+
+  // 用到的色块标签集合
+  const usedBlobs = [];
+  const _seen = new Uint8Array(BLOB_MAX); // 标记是否已加入 usedBlobs
 
   for(let gy = 0; gy < gh; gy++){
     for(let gx = 0; gx < gw; gx++){
       const x0 = Math.floor(gx / gw * IW);
-      const x1 = Math.floor((gx + 1) / gw * IW);
+      const x1 = Math.max(x0 + 1, Math.floor((gx + 1) / gw * IW));
       const y0 = Math.floor(gy / gh * IH);
-      const y1 = Math.floor((gy + 1) / gh * IH);
+      const y1 = Math.max(y0 + 1, Math.floor((gy + 1) / gh * IH));
 
-      const freq = {};
+      // 统计格内各色块频次（复用 _freqBuf）
+      const usedKeys = [];
       let fgCount = 0;
 
-      for(let py = y0; py < Math.max(y1, y0+1); py++){
-        for(let px = x0; px < Math.max(x1, x0+1); px++){
-          const idx = (py * IW + px) * 4;
-          if(data[idx+3] < 128) continue;
+      for(let py = y0; py < y1; py++){
+        for(let px = x0; px < x1; px++){
+          const lbl = labels[py * IW + px];
+          if(lbl < 0) continue; // 背景
           fgCount++;
-          const qr = Math.round(data[idx]   / COLOR_QUANT);
-          const qg = Math.round(data[idx+1] / COLOR_QUANT);
-          const qb = Math.round(data[idx+2] / COLOR_QUANT);
-          const key = qr * 10000 + qg * 100 + qb;
-          freq[key] = (freq[key] || 0) + 1;
+          if(_freqBuf[lbl] === 0) usedKeys.push(lbl);
+          _freqBuf[lbl]++;
         }
       }
 
-      if(fgCount < minCellPx) continue;
+      if(fgCount < minCellPx){
+        for(const k of usedKeys) _freqBuf[k] = 0;
+        continue;
+      }
 
-      const maxFreq = Math.max(...Object.values(freq));
-      totalPurity += maxFreq / fgCount;
-      validCells++;
+      // 找主色
+      let domLabel = usedKeys[0], domCount = 0;
+      for(const k of usedKeys){
+        if(_freqBuf[k] > domCount){ domCount = _freqBuf[k]; domLabel = k; }
+      }
+
+      // 把每个色块的像素归入 total；主色像素归入 domSum
+      for(const k of usedKeys){
+        const cnt = _freqBuf[k];
+        _freqBuf[k] = 0;
+        if(!_seen[k]){ _seen[k] = 1; usedBlobs.push(k); }
+        _blobTotal[k]  += cnt;
+        if(k === domLabel) _blobDomSum[k] += cnt;
+      }
     }
   }
 
-  if(validCells === 0) return null;
+  // 按色块计算纯净率，取各色块均值
+  let blobPuritySum = 0, blobCount = 0;
+  for(const k of usedBlobs){
+    const total = _blobTotal[k];
+    if(total >= minCellPx){
+      blobPuritySum += _blobDomSum[k] / total;
+      blobCount++;
+    }
+    // 清零
+    _blobTotal[k] = 0;
+    _blobDomSum[k] = 0;
+    _seen[k] = 0;
+  }
 
-  const cellPurity = totalPurity / validCells;
+  if(blobCount === 0) return null;
+
+  const cellPurity = blobPuritySum / blobCount;
   const edge  = calcEdgeAlignment(gw, gh);
-  const edgeW = Math.max(0.4, edge);
-  const combo = cellPurity * edgeW;
+  const combo = cellPurity * (0.7 + 0.3 * edge);
 
   return { gw, gh, cellPurity, edge, combo, iou: cellPurity, purity: cellPurity, ambigCount: 0 };
 }
@@ -967,21 +1131,25 @@ function updateAutoGridBtn(){
   autoGridStatus.textContent = ready ? '就绪，点击开始寻优' : '需要先上传图片';
 }
 
-// 寻最优 GH（在给定 gw 下，±20% 高度范围内遍历）
+// 寻最优 GH（在给定 gw 下，±10% 高度范围内遍历）
 // 方案 A：对 GW×GH 能被 K×10 整除的尺寸，评分加 5% 偏好
+// 对宽高比接近原图的网格加微小偏好（避免极端形变）
 function findBestGH(gw){
   const imgAspect = srcImage.width / srcImage.height;
   const baseGH = Math.max(4, Math.min(100, Math.round(gw / imgAspect)));
-  const ghMin = Math.max(4, Math.round(baseGH * 0.8));
-  const ghMax = Math.min(100, Math.round(baseGH * 1.2));
-  const K = parseInt(rngColors.value); // 当前颜色数上限
+  const ghMin = Math.max(4, Math.round(baseGH * 0.90));
+  const ghMax = Math.min(100, Math.round(baseGH * 1.10));
+  const K = parseInt(rngColors.value);
   let best = null, bestScore = -1;
   for(let gh=ghMin; gh<=ghMax; gh++){
     const r = calcGridScore(gw, gh);
     if(!r) continue;
     let s = primaryScore(r);
-    // 整除加分：总格数能被 K×10 整除
+    // 整除加分
     if((gw * gh) % (K * 10) === 0) s *= 1.05;
+    // 宽高比接近原图时微加分（±5%以内加1%）
+    const ratio = (gw / gh) / imgAspect;
+    if(ratio >= 0.95 && ratio <= 1.05) s *= 1.01;
     if(s > bestScore){ bestScore = s; best = r; }
   }
   return best || { gw, gh: baseGH, iou:0, purity:0, edge:0, combo:0, ambigCount:0 };
@@ -1015,8 +1183,10 @@ document.getElementById('sel-score-mode').onchange = ()=>{
   if(r) applyGridResult(r, '◉');
 };
 
-// ── 全量自动寻优 ──
-// 遍历 GW=8~100，每个 GW 找最优 GH，取综合分最高的尺寸
+// ── 全量自动寻优（三段式：粗扫→精扫→提前终止）──
+// 第一段：GW 步长4粗扫（8,12,16…100），找粗最优区间
+// 第二段：粗最优 GW ±4 范围精扫步长1
+// 提前终止：综合分 ≥ 0.80 立即停止
 const AUTO_TARGET_SCORE = 0.80;
 
 async function runAutoGrid(){
@@ -1024,28 +1194,69 @@ async function runAutoGrid(){
   btnAutoGrid.disabled    = true;
   btnGridSmaller.disabled = true;
   btnGridLarger.disabled  = true;
-  autoGridStatus.textContent = '寻优中…';
+  autoGridStatus.textContent = '检测像素风格式…';
   autoGridStatus.style.color = '#8888aa';
 
-  let bestResult = null, bestScore = -1;
+  // ── 像素风检测：找到原生网格就直接用，跳过全量搜索 ──
+  await new Promise(r => setTimeout(r, 0)); // 让 UI 刷新
+  const pixelArt = detectPixelArtGrid();
+  if(pixelArt){
+    const { S, gw, gh, purity } = pixelArt;
+    detectedPixelSize = S; // 记录元素尺寸，runProcess 用中心像素采样
+    autoGridStatus.textContent = `✦ 像素风  元素尺寸 ${S}px → ${gw}×${gh}\n格纯净 ${(purity*100).toFixed(1)}%  原生网格精确匹配`;
+    autoGridStatus.style.color = '#44ccff';
+    rngGW.value = gw; valGW.textContent = gw;
+    rngGH.value = gh; valGH.textContent = gh;
+    progressGrid.style.width = '100%';
+    setTimeout(()=>{ progressGrid.style.width='0%'; }, 800);
+    updateAutoGridBtn();
+    runProcess();
+    return;
+  }
+  detectedPixelSize = 0; // 非像素风，清除
 
+  let bestResult = null, bestScore = -1;
+  let coarseWinner = 8; // 粗扫最优 GW
+
+  // ── 第一段：粗扫（步长4，约24次）──
   await new Promise(resolve => {
-    let gw = 8;
+    const coarseList = [];
+    for(let g = 8; g <= 100; g += 4) coarseList.push(g);
+    let idx = 0;
     function step(){
-      if(gw > 100){ resolve(); return; }
+      if(idx >= coarseList.length){ resolve(); return; }
+      const gw = coarseList[idx++];
       const r = findBestGH(gw);
-      if(r){
-        const s = r.combo;
-        if(s > bestScore){ bestScore = s; bestResult = r; }
-      }
-      progressGrid.style.width = ((gw - 8) / 92 * 100).toFixed(0) + '%';
-      autoGridStatus.textContent = `寻优中… GW=${gw}  当前最优综合 ${(bestScore*100).toFixed(1)}%`;
+      if(r && r.combo > bestScore){ bestScore = r.combo; bestResult = r; coarseWinner = gw; }
+      progressGrid.style.width = (idx / coarseList.length * 50).toFixed(0) + '%';
+      autoGridStatus.textContent = `粗扫 GW=${gw}  当前最优 ${(bestScore*100).toFixed(1)}%`;
       if(bestScore >= AUTO_TARGET_SCORE){ resolve(); return; }
-      gw++;
       setTimeout(step, 0);
     }
     step();
   });
+
+  // ── 第二段：精扫（粗最优 ±4 步长1，约9次，可提前终止）──
+  if(bestScore < AUTO_TARGET_SCORE){
+    const fineMin = Math.max(8,   coarseWinner - 4);
+    const fineMax = Math.min(100, coarseWinner + 4);
+    const fineList = [];
+    for(let g = fineMin; g <= fineMax; g++) if(g % 4 !== 0) fineList.push(g); // 跳过粗扫已算过的
+    await new Promise(resolve => {
+      let idx = 0;
+      function step(){
+        if(idx >= fineList.length){ resolve(); return; }
+        const gw = fineList[idx++];
+        const r = findBestGH(gw);
+        if(r && r.combo > bestScore){ bestScore = r.combo; bestResult = r; }
+        progressGrid.style.width = (50 + idx / fineList.length * 50).toFixed(0) + '%';
+        autoGridStatus.textContent = `精扫 GW=${gw}  当前最优 ${(bestScore*100).toFixed(1)}%`;
+        if(bestScore >= AUTO_TARGET_SCORE){ resolve(); return; }
+        setTimeout(step, 0);
+      }
+      step();
+    });
+  }
 
   if(!bestResult){
     autoGridStatus.textContent = '未找到有效结果（请先上传图片）';
@@ -1074,8 +1285,10 @@ fileInput.onchange = (e)=>{
   srcImage.onload = ()=>{
     document.getElementById('info-orig').textContent = `${srcImage.width} × ${srcImage.height}`;
     alphaMask = null;
+    detectedPixelSize = 0;
     clearEdgeCache();
     clearSrcPixelCache();
+    clearSmallImgCache();
     rmbgStatus.textContent = '未使用';
     rmbgStatus.style.color = '#555577';
     btnProcess.disabled = false;
@@ -1118,13 +1331,42 @@ function runProcess(){
   const ctxOrig = canvasOrig.getContext('2d');
   ctxOrig.drawImage(srcImage, 0, 0, canvasOrig.width, canvasOrig.height);
 
-  // 2. 将图片缩放到 GW×GH，采样像素
+  // 2. 采样每个格子的代表色
+  //    像素风模式：直接读每个元素块的中心像素，避免缩放插值混色
+  //    普通模式：缩放到 GW×GH（关闭图像平滑，保证最近邻采样）
   const offscreen = document.createElement('canvas');
   offscreen.width = GW; offscreen.height = GH;
   const ctxOff = offscreen.getContext('2d');
-  ctxOff.drawImage(srcImage, 0, 0, GW, GH);
-  const imgData = ctxOff.getImageData(0, 0, GW, GH);
-  const pixels = imgData.data; // RGBA
+  let pixels;
+  const S = detectedPixelSize;
+  if(S > 0 && srcImage.width === GW * S && srcImage.height === GH * S){
+    // 像素风：从原图读每块中心像素
+    const fullC = document.createElement('canvas');
+    fullC.width = srcImage.width; fullC.height = srcImage.height;
+    const fullCtx = fullC.getContext('2d');
+    fullCtx.drawImage(srcImage, 0, 0);
+    const fullData = fullCtx.getImageData(0, 0, srcImage.width, srcImage.height).data;
+    const buf = new Uint8ClampedArray(GW * GH * 4);
+    for(let gy = 0; gy < GH; gy++){
+      for(let gx = 0; gx < GW; gx++){
+        // 取该元素块的中心像素
+        const cx = gx * S + Math.floor(S / 2);
+        const cy = gy * S + Math.floor(S / 2);
+        const si = (cy * srcImage.width + cx) * 4;
+        const di = (gy * GW + gx) * 4;
+        buf[di]   = fullData[si];
+        buf[di+1] = fullData[si+1];
+        buf[di+2] = fullData[si+2];
+        buf[di+3] = fullData[si+3];
+      }
+    }
+    pixels = buf;
+  } else {
+    // 普通模式：最近邻缩放（关闭平滑避免边界混色）
+    ctxOff.imageSmoothingEnabled = false;
+    ctxOff.drawImage(srcImage, 0, 0, GW, GH);
+    pixels = ctxOff.getImageData(0, 0, GW, GH).data;
+  }
 
   const removeBg   = chkRemoveBg.checked;
   const bgThreshold = parseInt(rngBgThresh.value);
