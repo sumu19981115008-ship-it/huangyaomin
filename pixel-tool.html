@@ -625,23 +625,26 @@ let _edgeCache = null; // { map: Float32Array, w, h }
 function getEdgeMap(){
   if(_edgeCache) return _edgeCache;
 
-  // 取 alpha 源：优先 alphaMask，其次原图自身 alpha
-  let srcW, srcH, alphaData;
+  // 取图像数据：优先 alphaMask（用 alpha 通道），否则用原图 RGB 亮度
+  let srcW, srcH, gray;
+  const c = document.createElement('canvas');
   if(alphaMask){
     srcW = alphaMask.w; srcH = alphaMask.h;
-    alphaData = alphaMask.imageData.data; // RGBA
+    const d = alphaMask.imageData.data;
+    gray = new Float32Array(srcW * srcH);
+    for(let i=0; i<srcW*srcH; i++) gray[i] = d[i*4+3] / 255;
   } else if(srcImage){
-    const c = document.createElement('canvas');
     c.width = srcImage.width; c.height = srcImage.height;
     c.getContext('2d').drawImage(srcImage, 0, 0);
     const id = c.getContext('2d').getImageData(0,0,c.width,c.height);
     srcW = c.width; srcH = c.height;
-    alphaData = id.data;
+    gray = new Float32Array(srcW * srcH);
+    // 用 RGB 亮度（有 alpha 通道时乘以 alpha，避免透明区域产生虚假边缘）
+    for(let i=0; i<srcW*srcH; i++){
+      const r=id.data[i*4], g=id.data[i*4+1], b=id.data[i*4+2], a=id.data[i*4+3]/255;
+      gray[i] = (0.299*r + 0.587*g + 0.114*b) / 255 * a;
+    }
   } else return null;
-
-  // 提取灰度（仅用 alpha 通道作为"灰度"，边缘即形状边缘）
-  const gray = new Float32Array(srcW * srcH);
-  for(let i=0; i<srcW*srcH; i++) gray[i] = alphaData[i*4+3] / 255;
 
   // Sobel 3×3
   const edge = new Float32Array(srcW * srcH);
@@ -681,56 +684,36 @@ function calcEdgeAlignment(gw, gh){
   if(!em) return 0;
   const { map, w: EW, h: EH } = em;
 
-  // 网格线在边缘图坐标系中的采样
-  // 每格宽度（像素）
   const cellW = EW / gw;
   const cellH = EH / gh;
-  const halfW = Math.max(1, Math.round(cellW * 0.15)); // 线宽带
-  const halfH = Math.max(1, Math.round(cellH * 0.15));
+  // 半格长度（像素），边缘像素离网格线的最大可能距离
+  const halfCell = Math.min(cellW, cellH) / 2;
 
-  let onLineSum = 0, onLineCnt = 0;
-  let offLineSum = 0, offLineCnt = 0;
+  // 只取边缘强度 > 阈值的像素（真正的轮廓像素）
+  const EDGE_THRESH = 0.25;
+  let scoreSum = 0, cnt = 0;
 
-  // 采样竖向网格线 x = i * cellW (i=1..gw-1)
-  for(let i=1; i<gw; i++){
-    const cx = Math.round(i * cellW);
-    for(let py=0; py<EH; py++){
-      // 线上 ±halfW
-      for(let dx=-halfW; dx<=halfW; dx++){
-        const px = cx + dx;
-        if(px<0||px>=EW) continue;
-        onLineSum += map[py*EW+px]; onLineCnt++;
-      }
-      // 格中央（离线最远处）
-      const midX = Math.round((i - 0.5) * cellW);
-      const mxL = Math.max(0, midX - halfW), mxR = Math.min(EW-1, midX + halfW);
-      for(let px=mxL; px<=mxR; px++){
-        offLineSum += map[py*EW+px]; offLineCnt++;
-      }
+  for(let py = 0; py < EH; py++){
+    for(let px = 0; px < EW; px++){
+      const e = map[py * EW + px];
+      if(e < EDGE_THRESH) continue;
+
+      // 该像素在格内的局部坐标（0 = 格左/上边线，cellW/cellH = 格右/下边线）
+      const lx = (px % cellW + cellW) % cellW; // 距左侧竖线的距离
+      const ly = (py % cellH + cellH) % cellH; // 距上侧横线的距离
+      // 到最近竖线的距离
+      const dv = Math.min(lx, cellW - lx);
+      // 到最近横线的距离
+      const dh = Math.min(ly, cellH - ly);
+      // 取最近网格线的距离
+      const d = Math.min(dv, dh);
+      // 距离越小=对齐越好，归一化到 [0,1]，用边缘强度加权
+      scoreSum += e * Math.max(0, 1 - d / halfCell);
+      cnt += e;
     }
   }
 
-  // 采样横向网格线 y = j * cellH (j=1..gh-1)
-  for(let j=1; j<gh; j++){
-    const cy = Math.round(j * cellH);
-    for(let px=0; px<EW; px++){
-      for(let dy=-halfH; dy<=halfH; dy++){
-        const py = cy + dy;
-        if(py<0||py>=EH) continue;
-        onLineSum += map[py*EW+px]; onLineCnt++;
-      }
-      const midY = Math.round((j - 0.5) * cellH);
-      const myT = Math.max(0, midY - halfH), myB = Math.min(EH-1, midY + halfH);
-      for(let py=myT; py<=myB; py++){
-        offLineSum += map[py*EW+px]; offLineCnt++;
-      }
-    }
-  }
-
-  const onAvg  = onLineCnt  > 0 ? onLineSum  / onLineCnt  : 0;
-  const offAvg = offLineCnt > 0 ? offLineSum / offLineCnt : 0;
-  // 差值越大=网格线越贴边缘；归一化到 0~1
-  return Math.max(0, Math.min(1, (onAvg - offAvg) * 4));
+  return cnt > 0 ? scoreSum / cnt : 0;
 }
 
 // ════════════════════════════════════════════════
@@ -810,7 +793,8 @@ function calcGridScore(gw, gh){
   const iou    = union > 0 ? intersection / union : 0;
   const purity = 1 - ambigCount / N;
   const edge   = calcEdgeAlignment(gw, gh);
-  const combo  = iou * purity * (0.5 + 0.5 * edge); // edge 权重 50%
+  const edgeW  = Math.max(0.4, edge); // 对齐分保底 0.4，避免算不准时压死综合分
+  const combo  = iou * purity * edgeW;
 
   return { gw, gh, iou, purity, edge, combo, ambigCount };
 }
