@@ -680,6 +680,7 @@ btnRmbg.onclick = async ()=>{
       // 保存原始尺寸 alpha 数据（runProcess 时按网格采样）
       alphaMask = { imageData: ac.getContext('2d').getImageData(0,0,ac.width,ac.height), w: ac.width, h: ac.height };
       clearEdgeCache();
+      clearSrcPixelCache();
 
       rmbgStatus.textContent = `✓ 抠图完成（${rmbgImg.width}×${rmbgImg.height}）`;
       rmbgStatus.style.color = '#44cc44';
@@ -854,62 +855,97 @@ function getAlphaGrid(gw, gh){
 }
 
 // ════════════════════════════════════════════════
-// 统一评分函数
-// 返回 { gw, gh, iou, purity, combo, detail }
-//
-// IoU：把每格按 alpha>0.5 判断前景/背景
-//       IoU = |像素化前景 ∩ 原图前景| / |像素化前景 ∪ 原图前景|
-//       用格子面积加权近似：交集=两者alpha之积，并集=两者alpha之和-积
-//
-// 歧义格纯净度：alpha∈(0.3,0.7) 为歧义格
-//       purity = 1 - (歧义格数 / 总格数)
-//
-// 综合：combo = IoU × purity
+// 原图像素缓存（寻优用，惰性加载）
 // ════════════════════════════════════════════════
 
+let _srcPixelCache = null;
+
+function getSrcPixels(){
+  if(_srcPixelCache) return _srcPixelCache;
+  if(!srcImage) return null;
+  const c = document.createElement('canvas');
+  c.width = srcImage.width; c.height = srcImage.height;
+  c.getContext('2d').drawImage(srcImage, 0, 0);
+  _srcPixelCache = { data: c.getContext('2d').getImageData(0,0,c.width,c.height).data, w: c.width, h: c.height };
+  return _srcPixelCache;
+}
+
+function clearSrcPixelCache(){ _srcPixelCache = null; }
+
+// ════════════════════════════════════════════════
+// 核心评分：单元格主色覆盖率
+//
+// 对每个格子采样原图全部像素（alpha>128 的前景像素），
+// RGB 量化到 COLOR_QUANT 级后统计主色频次。
+// 主色像素 / 格内前景像素 = 该格纯净度。
+// 所有格子的平均纯净度 = cellPurity（越高格子划分越干净）。
+// 边缘对齐作辅助分，保底 0.4。
+// ════════════════════════════════════════════════
+
+const COLOR_QUANT = 32; // RGB 量化步长
+
 function calcGridScore(gw, gh){
-  const grid = getAlphaGrid(gw, gh);
-  if(!grid) return null;
+  const src = getSrcPixels();
+  if(!src) return null;
 
-  const N = gw * gh;
-  const FG = 0.5; // 前景判定阈值
-  const AMBIG_LO = 0.3, AMBIG_HI = 0.7;
+  const { data, w: IW, h: IH } = src;
+  const minCellPx = 4;
 
-  let intersection = 0, union = 0, ambigCount = 0;
+  let totalPurity = 0, validCells = 0;
 
-  for(let i=0; i<N; i++){
-    const a = grid[i]; // 格子的 alpha 均值（代表原图在该格的覆盖度）
-    // 像素化后该格是否前景
-    const pixFg = a >= FG ? 1.0 : 0.0;
-    // 原图在该格的"软"覆盖度就是 a 本身
-    // IoU 用软计算：inter += min(pixFg, a)，union += max(pixFg, a)
-    intersection += Math.min(pixFg, a);
-    union        += Math.max(pixFg, a);
-    // 歧义格
-    if(a > AMBIG_LO && a < AMBIG_HI) ambigCount++;
+  for(let gy = 0; gy < gh; gy++){
+    for(let gx = 0; gx < gw; gx++){
+      const x0 = Math.floor(gx / gw * IW);
+      const x1 = Math.floor((gx + 1) / gw * IW);
+      const y0 = Math.floor(gy / gh * IH);
+      const y1 = Math.floor((gy + 1) / gh * IH);
+
+      const freq = {};
+      let fgCount = 0;
+
+      for(let py = y0; py < Math.max(y1, y0+1); py++){
+        for(let px = x0; px < Math.max(x1, x0+1); px++){
+          const idx = (py * IW + px) * 4;
+          if(data[idx+3] < 128) continue;
+          fgCount++;
+          const qr = Math.round(data[idx]   / COLOR_QUANT);
+          const qg = Math.round(data[idx+1] / COLOR_QUANT);
+          const qb = Math.round(data[idx+2] / COLOR_QUANT);
+          const key = qr * 10000 + qg * 100 + qb;
+          freq[key] = (freq[key] || 0) + 1;
+        }
+      }
+
+      if(fgCount < minCellPx) continue;
+
+      const maxFreq = Math.max(...Object.values(freq));
+      totalPurity += maxFreq / fgCount;
+      validCells++;
+    }
   }
 
-  const iou    = union > 0 ? intersection / union : 0;
-  const purity = 1 - ambigCount / N;
-  const edge   = calcEdgeAlignment(gw, gh);
-  const edgeW  = Math.max(0.4, edge); // 对齐分保底 0.4，避免算不准时压死综合分
-  const combo  = iou * purity * edgeW;
+  if(validCells === 0) return null;
 
-  return { gw, gh, iou, purity, edge, combo, ambigCount };
+  const cellPurity = totalPurity / validCells;
+  const edge  = calcEdgeAlignment(gw, gh);
+  const edgeW = Math.max(0.4, edge);
+  const combo = cellPurity * edgeW;
+
+  return { gw, gh, cellPurity, edge, combo, iou: cellPurity, purity: cellPurity, ambigCount: 0 };
 }
 
 // 从评分结果中取当前模式的主分
 function primaryScore(r){
-  const mode = document.getElementById('sel-score-mode').value;
-  if(mode === 'iou')   return r.iou;
-  if(mode === 'ambig') return r.purity;
-  if(mode === 'edge')  return r.edge;
-  return r.combo;
+  if(r.combo !== undefined) return r.combo;
+  return 0;
 }
 
 // 格式化状态栏文字
 function formatScoreStatus(prefix, r){
-  return `${prefix} ${r.gw}×${r.gh}\nIoU ${(r.iou*100).toFixed(1)}%  纯净 ${(r.purity*100).toFixed(1)}%  对齐 ${(r.edge*100).toFixed(1)}%  综合 ${(r.combo*100).toFixed(1)}%`;
+  const cp = ((r.cellPurity ?? r.iou ?? 0)*100).toFixed(1);
+  const ed = ((r.edge ?? 0)*100).toFixed(1);
+  const co = ((r.combo ?? 0)*100).toFixed(1);
+  return `${prefix} ${r.gw}×${r.gh}\n格纯净 ${cp}%  边缘对齐 ${ed}%  综合 ${co}%`;
 }
 
 // ════════════════════════════════════════════════
@@ -923,15 +959,12 @@ const btnGridSmaller = document.getElementById('btn-grid-smaller');
 const btnGridLarger  = document.getElementById('btn-grid-larger');
 
 function updateAutoGridBtn(){
-  const hasAlpha = !!alphaMask || chkRemoveBg.checked;
-  const ready = !!srcImage && hasAlpha;
+  const ready = !!srcImage;
   btnAutoGrid.disabled    = !ready;
   btnGridSmaller.disabled = !ready;
   btnGridLarger.disabled  = !ready;
   autoGridStatus.style.color = '#555577';
-  autoGridStatus.textContent = srcImage
-    ? (hasAlpha ? '就绪，点击开始寻优' : '需要先抠图（remove.bg 或泛洪填充）')
-    : '需要先上传图片';
+  autoGridStatus.textContent = ready ? '就绪，点击开始寻优' : '需要先上传图片';
 }
 
 // 寻最优 GH（在给定 gw 下，±20% 高度范围内遍历）
@@ -982,8 +1015,8 @@ document.getElementById('sel-score-mode').onchange = ()=>{
   if(r) applyGridResult(r, '◉');
 };
 
-// ── 全量自动寻优（三维：GW × 颜色数K × 合并阈值T）──
-// 目标：综合分 ≥ 80%；达标即停，否则取最优
+// ── 全量自动寻优 ──
+// 遍历 GW=8~100，每个 GW 找最优 GH，取综合分最高的尺寸
 const AUTO_TARGET_SCORE = 0.80;
 
 async function runAutoGrid(){
@@ -991,78 +1024,39 @@ async function runAutoGrid(){
   btnAutoGrid.disabled    = true;
   btnGridSmaller.disabled = true;
   btnGridLarger.disabled  = true;
-  autoGridStatus.textContent = '三维寻优中…';
+  autoGridStatus.textContent = '寻优中…';
   autoGridStatus.style.color = '#8888aa';
 
-  // 搜索空间：GW 8~100，K 2~10，T 0/15/30/50（阈值几个典型值）
-  const gwList = [];
-  for(let g = 8; g <= 100; g++) gwList.push(g);
-  const kList = [2, 3, 4, 5, 6, 7, 8, 10];
-  const tList = [0, 15, 30, 50];
-  const total = gwList.length * kList.length * tList.length;
-
   let bestResult = null, bestScore = -1;
-  let searched = 0;
 
   await new Promise(resolve => {
-    let gi = 0, ki = 0, ti = 0;
-
+    let gw = 8;
     function step(){
-      // 迭代索引
-      const gw = gwList[gi];
-      const K  = kList[ki];
-      const T  = tList[ti];
-
-      // 临时写入颜色滑块（影响 findBestGH 里的整除偏好和 K-Means）
-      rngColors.value = K; valColors.textContent = K;
-      rngThresh.value = T; valThresh.textContent = T;
-
+      if(gw > 100){ resolve(); return; }
       const r = findBestGH(gw);
       if(r){
-        // 用 combo 分（不受模式选择影响）作为寻优标准
-        const s = r.combo ?? primaryScore(r);
-        if(s > bestScore){
-          bestScore = s;
-          bestResult = { ...r, K, T };
-        }
+        const s = r.combo;
+        if(s > bestScore){ bestScore = s; bestResult = r; }
       }
-
-      searched++;
-      progressGrid.style.width = (searched / total * 100).toFixed(0) + '%';
-      autoGridStatus.textContent = `寻优中… GW=${gw} K=${K} T=${T}  当前最优综合 ${(bestScore*100).toFixed(1)}%`;
-
-      // 达标提前结束
+      progressGrid.style.width = ((gw - 8) / 92 * 100).toFixed(0) + '%';
+      autoGridStatus.textContent = `寻优中… GW=${gw}  当前最优综合 ${(bestScore*100).toFixed(1)}%`;
       if(bestScore >= AUTO_TARGET_SCORE){ resolve(); return; }
-
-      // 推进索引
-      ti++;
-      if(ti >= tList.length){ ti = 0; ki++; }
-      if(ki >= kList.length){ ki = 0; gi++; }
-      if(gi >= gwList.length){ resolve(); return; }
-
+      gw++;
       setTimeout(step, 0);
     }
     step();
   });
 
   if(!bestResult){
-    autoGridStatus.textContent = '未找到有效结果（请先抠图）';
+    autoGridStatus.textContent = '未找到有效结果（请先上传图片）';
     autoGridStatus.style.color = '#ff4444';
     updateAutoGridBtn();
     progressGrid.style.width = '0%';
     return;
   }
 
-  // 写入最优参数
-  rngColors.value = bestResult.K; valColors.textContent = bestResult.K;
-  rngThresh.value = bestResult.T; valThresh.textContent = bestResult.T;
-  applyGridResult(bestResult, bestScore >= AUTO_TARGET_SCORE ? '✓' : '◎');
-
   const reached = bestScore >= AUTO_TARGET_SCORE;
-  autoGridStatus.textContent =
-    `${reached ? '✓ 达标' : '◎ 最优'} ${bestResult.gw}×${bestResult.gh}  K=${bestResult.K}色  T=${bestResult.T}\n` +
-    `IoU ${(bestResult.iou*100).toFixed(1)}%  纯净 ${(bestResult.purity*100).toFixed(1)}%  对齐 ${(bestResult.edge*100).toFixed(1)}%  综合 ${(bestScore*100).toFixed(1)}%`;
-  autoGridStatus.style.color = reached ? '#44cc44' : '#ffaa44';
+  applyGridResult(bestResult, reached ? '✓' : '◎');
 
   progressGrid.style.width = '100%';
   setTimeout(()=>{ progressGrid.style.width='0%'; }, 800);
@@ -1079,8 +1073,9 @@ fileInput.onchange = (e)=>{
   srcImage = new Image();
   srcImage.onload = ()=>{
     document.getElementById('info-orig').textContent = `${srcImage.width} × ${srcImage.height}`;
-    alphaMask = null; // 新图片，清除旧 mask
+    alphaMask = null;
     clearEdgeCache();
+    clearSrcPixelCache();
     rmbgStatus.textContent = '未使用';
     rmbgStatus.style.color = '#555577';
     btnProcess.disabled = false;
