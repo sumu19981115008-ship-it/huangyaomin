@@ -56,6 +56,18 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
 
 .progress-bar{width:100%;height:4px;background:#111128;border-radius:2px;overflow:hidden;margin-top:6px}
 .progress-fill{height:100%;background:#5555cc;transition:width .1s;width:0%}
+
+/* ── 四格对比 modal ── */
+#compare-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:999;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+#compare-modal.open{display:flex}
+#compare-modal h2{color:#aaaaee;font-size:13px;letter-spacing:1px}
+#compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.cmp-cell{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;padding:10px;border:2px solid #2a2a50;border-radius:8px;transition:border-color .15s,transform .1s;background:#0d0d1a}
+.cmp-cell:hover{border-color:#6666ff;transform:scale(1.03)}
+.cmp-cell canvas{image-rendering:pixelated;max-width:320px;max-height:240px}
+.cmp-label{font-size:11px;color:#8888cc;text-align:center;line-height:1.6}
+#compare-close{font-size:11px;color:#555577;cursor:pointer;margin-top:4px}
+#compare-close:hover{color:#aaaacc}
 </style>
 </head>
 <body>
@@ -85,6 +97,7 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
       <button class="btn" id="btn-grid-smaller" disabled style="flex:1;padding:6px 0">− 缩小</button>
       <button class="btn" id="btn-grid-larger"  disabled style="flex:1;padding:6px 0">+ 放大</button>
     </div>
+    <button class="btn" id="btn-compare" disabled style="margin-top:6px">四格对比预览</button>
     <div id="auto-grid-status" style="margin-top:6px;font-size:10px;color:#555577;min-height:28px;line-height:1.6;white-space:pre-line">需要先抠图</div>
     <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" id="progress-grid"></div></div>
     <label style="margin-top:10px">宽度（格）<span class="val-display" id="val-gw">20</span></label>
@@ -180,6 +193,13 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
   </div>
 </div>
 
+<!-- ── 四格对比 modal ── -->
+<div id="compare-modal">
+  <h2>点击任意预览选定该尺寸</h2>
+  <div id="compare-grid"></div>
+  <div id="compare-close">✕ 关闭</div>
+</div>
+
 <script>
 // ════════════════════════════════════════════════
 // 工具函数
@@ -219,78 +239,104 @@ function rgbHex(r,g,b){
 }
 
 // ════════════════════════════════════════════════
-// K-Means 色彩量化
+// Median Cut 色彩量化（替代 K-Means）
+//
+// 原理来自 GIF 标准量化算法：
+//   把所有像素的 RGB 颜色空间视为一个三维色块，
+//   反复找跨度最大的轴从中位数切一刀，递归分到 K 个桶，
+//   每桶取原图中离均值最近的真实像素作为代表色。
+//
+// 优势：确定性（无随机，无迭代），速度 O(n log K)，
+//       颜色覆盖更均匀，结果稳定不跳变。
 // ════════════════════════════════════════════════
 
-function kMeansQuantize(pixels, k, maxIter=30){
-  // pixels: Uint8Array RGBA，返回 { palette: [[r,g,b],...], assignment: Int32Array }
+function medianCutQuantize(pixels, k){
   const n = pixels.length / 4;
 
-  // 用 K-Means++ 初始化
-  const centers = [];
-  const firstIdx = Math.floor(Math.random() * n);
-  centers.push([pixels[firstIdx*4], pixels[firstIdx*4+1], pixels[firstIdx*4+2]]);
+  // 收集所有前景像素索引
+  const indices = [];
+  for(let i = 0; i < n; i++){
+    if(pixels[i*4+3] >= 128) indices.push(i);
+  }
+  if(indices.length === 0) return { palette: [[128,128,128]], assignment: new Int32Array(n) };
 
-  for(let ci=1; ci<k; ci++){
-    const dists = new Float32Array(n);
-    let sum = 0;
-    for(let i=0;i<n;i++){
-      const r=pixels[i*4],g=pixels[i*4+1],b=pixels[i*4+2];
-      let best=Infinity;
-      for(const c of centers){
-        const d=(r-c[0])**2+(g-c[1])**2+(b-c[2])**2;
-        if(d<best) best=d;
+  // 递归 median cut：buckets 是像素索引数组的列表
+  let buckets = [indices];
+  while(buckets.length < k){
+    // 找跨度最大的桶
+    let maxSpread = -1, splitIdx = 0;
+    for(let bi = 0; bi < buckets.length; bi++){
+      const b = buckets[bi];
+      let minR=255,maxR=0,minG=255,maxG=0,minB=255,maxB=0;
+      for(const i of b){
+        const r=pixels[i*4],g=pixels[i*4+1],bv=pixels[i*4+2];
+        if(r<minR)minR=r; if(r>maxR)maxR=r;
+        if(g<minG)minG=g; if(g>maxG)maxG=g;
+        if(bv<minB)minB=bv; if(bv>maxB)maxB=bv;
       }
-      dists[i]=best; sum+=best;
+      const spread = Math.max(maxR-minR, maxG-minG, maxB-minB);
+      if(spread > maxSpread){ maxSpread=spread; splitIdx=bi; }
     }
-    let rnd = Math.random()*sum, acc=0;
-    for(let i=0;i<n;i++){ acc+=dists[i]; if(acc>=rnd){ centers.push([pixels[i*4],pixels[i*4+1],pixels[i*4+2]]); break; } }
+
+    const bucket = buckets[splitIdx];
+    if(bucket.length <= 1) break; // 无法继续分
+
+    // 找跨度最大的通道，按该通道中位数切割
+    let minR=255,maxR=0,minG=255,maxG=0,minB=255,maxB=0;
+    for(const i of bucket){
+      const r=pixels[i*4],g=pixels[i*4+1],bv=pixels[i*4+2];
+      if(r<minR)minR=r; if(r>maxR)maxR=r;
+      if(g<minG)minG=g; if(g>maxG)maxG=g;
+      if(bv<minB)minB=bv; if(bv>maxB)maxB=bv;
+    }
+    const spanR=maxR-minR, spanG=maxG-minG, spanB=maxB-minB;
+    const ch = spanR>=spanG && spanR>=spanB ? 0 : spanG>=spanB ? 1 : 2;
+
+    // 按通道值排序后从中间切
+    bucket.sort((a,b) => pixels[a*4+ch] - pixels[b*4+ch]);
+    const mid = bucket.length >> 1;
+    buckets.splice(splitIdx, 1, bucket.slice(0, mid), bucket.slice(mid));
   }
 
+  // 每个桶：计算均值，再从桶内找离均值最近的真实像素作代表色
+  const palette = [];
+  const bucketOf = new Int32Array(n).fill(-1);
+
+  for(let bi = 0; bi < buckets.length; bi++){
+    const b = buckets[bi];
+    let sr=0,sg=0,sbv=0;
+    for(const i of b){ sr+=pixels[i*4]; sg+=pixels[i*4+1]; sbv+=pixels[i*4+2]; }
+    const avgR=sr/b.length, avgG=sg/b.length, avgB=sbv/b.length;
+    let bestDist=Infinity, bestR=Math.round(avgR), bestG=Math.round(avgG), bestB=Math.round(avgB);
+    for(const i of b){
+      const r=pixels[i*4],g=pixels[i*4+1],bv=pixels[i*4+2];
+      const d=(r-avgR)**2+(g-avgG)**2+(bv-avgB)**2;
+      if(d<bestDist){ bestDist=d; bestR=r; bestG=g; bestB=bv; }
+      bucketOf[i] = bi;
+    }
+    palette.push([bestR, bestG, bestB]);
+  }
+
+  // 背景像素分配到最近的桶
   const assignment = new Int32Array(n);
-  let changed = true;
-
-  for(let iter=0; iter<maxIter && changed; iter++){
-    changed = false;
-    // 分配
-    for(let i=0;i<n;i++){
-      const r=pixels[i*4],g=pixels[i*4+1],b=pixels[i*4+2];
-      let best=Infinity, bestK=0;
-      for(let ci=0;ci<centers.length;ci++){
-        const c=centers[ci];
-        const d=(r-c[0])**2+(g-c[1])**2+(b-c[2])**2;
-        if(d<best){best=d;bestK=ci;}
-      }
-      if(assignment[i]!==bestK){assignment[i]=bestK;changed=true;}
+  for(let i = 0; i < n; i++){
+    if(bucketOf[i] >= 0){ assignment[i] = bucketOf[i]; continue; }
+    // alpha<128 的背景像素：找最近代表色
+    const r=pixels[i*4],g=pixels[i*4+1],bv=pixels[i*4+2];
+    let best=Infinity, bestK=0;
+    for(let ci=0;ci<palette.length;ci++){
+      const c=palette[ci];
+      const d=(r-c[0])**2+(g-c[1])**2+(bv-c[2])**2;
+      if(d<best){best=d;bestK=ci;}
     }
-    // 重算中心
-    const sums = Array.from({length:k},()=>[0,0,0,0]);
-    for(let i=0;i<n;i++){
-      const s=sums[assignment[i]];
-      s[0]+=pixels[i*4]; s[1]+=pixels[i*4+1]; s[2]+=pixels[i*4+2]; s[3]++;
-    }
-    for(let ci=0;ci<k;ci++){
-      if(sums[ci][3]>0){
-        centers[ci]=[sums[ci][0]/sums[ci][3], sums[ci][1]/sums[ci][3], sums[ci][2]/sums[ci][3]];
-      }
-    }
+    assignment[i]=bestK;
   }
 
-  // 收敛后：每个聚类取离均值最近的真实像素作为代表色
-  // 保证调色板里的颜色全部来自原图，不会出现插值幻色
-  const realPalette = centers.map((center, ci) => {
-    let bestDist = Infinity, bestR = center[0], bestG = center[1], bestB = center[2];
-    for(let i = 0; i < n; i++){
-      if(assignment[i] !== ci) continue;
-      const r=pixels[i*4], g=pixels[i*4+1], b=pixels[i*4+2];
-      const d=(r-center[0])**2+(g-center[1])**2+(b-center[2])**2;
-      if(d < bestDist){ bestDist=d; bestR=r; bestG=g; bestB=b; }
-    }
-    return [bestR, bestG, bestB];
-  });
-
-  return { palette: realPalette, assignment };
+  return { palette, assignment };
 }
+
+// 兼容旧调用名
+function kMeansQuantize(pixels, k){ return medianCutQuantize(pixels, k); }
 
 // ════════════════════════════════════════════════
 // 相似色合并（LAB 色差 < 阈值，贪心 Union-Find）
@@ -996,6 +1042,66 @@ function detectPixelArtGrid(){
 }
 
 // ════════════════════════════════════════════════
+// RLE 游程评分
+//
+// 压缩算法的核心思想：同色格子越连续 → 游程越长 → 越"整洁"。
+// 对 gw×gh 的色块标签网格，逐行+逐列扫描游程长度，
+// 归一化均值越高说明同色区域越连片，网格划分越合理。
+// 与"格内纯净度"互补：纯净度判断格子内部，RLE 判断格子之间。
+// ════════════════════════════════════════════════
+
+function calcRleScore(gw, gh){
+  const blob = getBlobLabels();
+  if(!blob) return 0;
+  const { labels, w: IW, h: IH } = blob;
+
+  // 先把小图量化标签降采样到 gw×gh 网格（每格取中心像素标签）
+  const grid = new Int16Array(gw * gh).fill(-1);
+  for(let gy = 0; gy < gh; gy++){
+    for(let gx = 0; gx < gw; gx++){
+      const cx = Math.floor((gx + 0.5) / gw * IW);
+      const cy = Math.floor((gy + 0.5) / gh * IH);
+      grid[gy * gw + gx] = labels[cy * IW + cx];
+    }
+  }
+
+  let totalRun = 0, runCount = 0;
+
+  // 横向扫描
+  for(let gy = 0; gy < gh; gy++){
+    let run = 1;
+    for(let gx = 1; gx < gw; gx++){
+      const cur  = grid[gy * gw + gx];
+      const prev = grid[gy * gw + gx - 1];
+      if(cur === prev && cur >= 0){ run++; }
+      else { if(prev >= 0){ totalRun += run; runCount++; } run = 1; }
+    }
+    const last = grid[gy * gw + gw - 1];
+    if(last >= 0){ totalRun += run; runCount++; }
+  }
+
+  // 纵向扫描
+  for(let gx = 0; gx < gw; gx++){
+    let run = 1;
+    for(let gy = 1; gy < gh; gy++){
+      const cur  = grid[gy * gw + gx];
+      const prev = grid[(gy-1) * gw + gx];
+      if(cur === prev && cur >= 0){ run++; }
+      else { if(prev >= 0){ totalRun += run; runCount++; } run = 1; }
+    }
+    const last = grid[(gh-1) * gw + gx];
+    if(last >= 0){ totalRun += run; runCount++; }
+  }
+
+  if(runCount === 0) return 0;
+  const avgRun = totalRun / runCount;
+  // 归一化：avgRun=1（完全碎）→0，avgRun≥目标值→1
+  // 目标游程长度 = min(gw,gh)/4（合理的色块大小期望）
+  const target = Math.max(2, Math.min(gw, gh) / 4);
+  return Math.min(1, (avgRun - 1) / (target - 1));
+}
+
+// ════════════════════════════════════════════════
 // 核心评分：单元格主色覆盖率
 //
 // 对每个格子采样原图全部像素（alpha>128 的前景像素），
@@ -1093,9 +1199,11 @@ function calcGridScore(gw, gh){
 
   const cellPurity = blobPuritySum / blobCount;
   const edge  = calcEdgeAlignment(gw, gh);
-  const combo = cellPurity * (0.7 + 0.3 * edge);
+  const rle   = calcRleScore(gw, gh);
+  // 综合分：纯净度60% + 边缘对齐20% + RLE连片度20%
+  const combo = cellPurity * 0.6 + edge * 0.2 + rle * 0.2;
 
-  return { gw, gh, cellPurity, edge, combo, iou: cellPurity, purity: cellPurity, ambigCount: 0 };
+  return { gw, gh, cellPurity, edge, rle, combo, iou: cellPurity, purity: cellPurity, ambigCount: 0 };
 }
 
 // 从评分结果中取当前模式的主分
@@ -1108,8 +1216,9 @@ function primaryScore(r){
 function formatScoreStatus(prefix, r){
   const cp = ((r.cellPurity ?? r.iou ?? 0)*100).toFixed(1);
   const ed = ((r.edge ?? 0)*100).toFixed(1);
+  const rl = ((r.rle ?? 0)*100).toFixed(1);
   const co = ((r.combo ?? 0)*100).toFixed(1);
-  return `${prefix} ${r.gw}×${r.gh}\n格纯净 ${cp}%  边缘对齐 ${ed}%  综合 ${co}%`;
+  return `${prefix} ${r.gw}×${r.gh}\n纯净 ${cp}%  对齐 ${ed}%  连片 ${rl}%  综合 ${co}%`;
 }
 
 // ════════════════════════════════════════════════
@@ -1121,12 +1230,17 @@ const autoGridStatus = document.getElementById('auto-grid-status');
 const progressGrid   = document.getElementById('progress-grid');
 const btnGridSmaller = document.getElementById('btn-grid-smaller');
 const btnGridLarger  = document.getElementById('btn-grid-larger');
+const btnCompare     = document.getElementById('btn-compare');
+
+// top-4 候选结果（runAutoGrid 收集）
+let compareTopResults = [];
 
 function updateAutoGridBtn(){
   const ready = !!srcImage;
   btnAutoGrid.disabled    = !ready;
   btnGridSmaller.disabled = !ready;
   btnGridLarger.disabled  = !ready;
+  btnCompare.disabled     = !ready || compareTopResults.length === 0;
   autoGridStatus.style.color = '#555577';
   autoGridStatus.textContent = ready ? '就绪，点击开始寻优' : '需要先上传图片';
 }
@@ -1217,6 +1331,7 @@ async function runAutoGrid(){
 
   let bestResult = null, bestScore = -1;
   let coarseWinner = 8; // 粗扫最优 GW
+  const allResults = []; // 收集所有候选，供 top-4 使用
 
   // ── 第一段：粗扫（步长4，约24次）──
   await new Promise(resolve => {
@@ -1227,7 +1342,10 @@ async function runAutoGrid(){
       if(idx >= coarseList.length){ resolve(); return; }
       const gw = coarseList[idx++];
       const r = findBestGH(gw);
-      if(r && r.combo > bestScore){ bestScore = r.combo; bestResult = r; coarseWinner = gw; }
+      if(r){
+        allResults.push(r);
+        if(r.combo > bestScore){ bestScore = r.combo; bestResult = r; coarseWinner = gw; }
+      }
       progressGrid.style.width = (idx / coarseList.length * 50).toFixed(0) + '%';
       autoGridStatus.textContent = `粗扫 GW=${gw}  当前最优 ${(bestScore*100).toFixed(1)}%`;
       if(bestScore >= AUTO_TARGET_SCORE){ resolve(); return; }
@@ -1248,7 +1366,10 @@ async function runAutoGrid(){
         if(idx >= fineList.length){ resolve(); return; }
         const gw = fineList[idx++];
         const r = findBestGH(gw);
-        if(r && r.combo > bestScore){ bestScore = r.combo; bestResult = r; }
+        if(r){
+          allResults.push(r);
+          if(r.combo > bestScore){ bestScore = r.combo; bestResult = r; }
+        }
         progressGrid.style.width = (50 + idx / fineList.length * 50).toFixed(0) + '%';
         autoGridStatus.textContent = `精扫 GW=${gw}  当前最优 ${(bestScore*100).toFixed(1)}%`;
         if(bestScore >= AUTO_TARGET_SCORE){ resolve(); return; }
@@ -1266,6 +1387,9 @@ async function runAutoGrid(){
     return;
   }
 
+  // 收集 top-4：综合分最高且 GW 差距 ≥ 8，保证尺寸分散
+  compareTopResults = pickTop4(allResults);
+
   const reached = bestScore >= AUTO_TARGET_SCORE;
   applyGridResult(bestResult, reached ? '✓' : '◎');
 
@@ -1274,6 +1398,99 @@ async function runAutoGrid(){
   updateAutoGridBtn();
   runProcess();
 }
+
+// ════════════════════════════════════════════════
+// 四格对比
+// ════════════════════════════════════════════════
+
+// 从候选结果中选4个：综合分降序，且相邻入选项 GW 差 ≥ 8
+function pickTop4(results){
+  const sorted = [...results].sort((a, b) => b.combo - a.combo);
+  const picked = [];
+  for(const r of sorted){
+    if(picked.length >= 4) break;
+    if(picked.every(p => Math.abs(p.gw - r.gw) >= 8)) picked.push(r);
+  }
+  // 不足4个时放宽限制直接补
+  if(picked.length < 4){
+    for(const r of sorted){
+      if(picked.length >= 4) break;
+      if(!picked.includes(r)) picked.push(r);
+    }
+  }
+  return picked;
+}
+
+// 用平均色快速渲染预览（不跑 K-Means，够快）
+function renderQuickPreview(gw, gh, maxDim = 300){
+  const src = getSrcPixels();
+  if(!src) return null;
+  const { data, w: IW, h: IH } = src;
+
+  const scale = Math.min(maxDim / gw, maxDim / gh);
+  const cellPx = Math.max(2, Math.floor(scale));
+  const c = document.createElement('canvas');
+  c.width = gw * cellPx; c.height = gh * cellPx;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0d0d1a';
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  for(let gy = 0; gy < gh; gy++){
+    for(let gx = 0; gx < gw; gx++){
+      const x0 = Math.floor(gx / gw * IW);
+      const x1 = Math.max(x0 + 1, Math.floor((gx + 1) / gw * IW));
+      const y0 = Math.floor(gy / gh * IH);
+      const y1 = Math.max(y0 + 1, Math.floor((gy + 1) / gh * IH));
+      let r = 0, g = 0, b = 0, cnt = 0;
+      for(let py = y0; py < y1; py++){
+        for(let px = x0; px < x1; px++){
+          const idx = (py * IW + px) * 4;
+          if(data[idx+3] < 128) continue;
+          r += data[idx]; g += data[idx+1]; b += data[idx+2]; cnt++;
+        }
+      }
+      if(cnt === 0) continue;
+      ctx.fillStyle = `rgb(${Math.round(r/cnt)},${Math.round(g/cnt)},${Math.round(b/cnt)})`;
+      ctx.fillRect(gx * cellPx, gy * cellPx, cellPx - 1, cellPx - 1);
+    }
+  }
+  return c;
+}
+
+// modal 交互
+const compareModal = document.getElementById('compare-modal');
+const compareGrid  = document.getElementById('compare-grid');
+document.getElementById('compare-close').onclick = ()=> compareModal.classList.remove('open');
+compareModal.addEventListener('click', e=>{ if(e.target === compareModal) compareModal.classList.remove('open'); });
+
+function openCompareModal(){
+  if(compareTopResults.length === 0) return;
+  compareGrid.innerHTML = '';
+  for(const r of compareTopResults){
+    const cell = document.createElement('div');
+    cell.className = 'cmp-cell';
+
+    const cvs = renderQuickPreview(r.gw, r.gh);
+    if(cvs) cell.appendChild(cvs);
+
+    const lbl = document.createElement('div');
+    lbl.className = 'cmp-label';
+    lbl.textContent = `${r.gw} × ${r.gh}    综合 ${(r.combo*100).toFixed(1)}%\n纯净 ${(r.cellPurity*100).toFixed(1)}%  对齐 ${(r.edge*100).toFixed(1)}%  连片 ${((r.rle??0)*100).toFixed(1)}%`;
+    lbl.style.whiteSpace = 'pre';
+    cell.appendChild(lbl);
+
+    cell.onclick = ()=>{
+      rngGW.value = r.gw; valGW.textContent = r.gw;
+      rngGH.value = r.gh; valGH.textContent = r.gh;
+      compareModal.classList.remove('open');
+      runProcess();
+    };
+    compareGrid.appendChild(cell);
+  }
+  compareModal.classList.add('open');
+}
+
+btnCompare.onclick = openCompareModal;
 
 // 文件上传
 fileInput.onchange = (e)=>{
@@ -1286,6 +1503,7 @@ fileInput.onchange = (e)=>{
     document.getElementById('info-orig').textContent = `${srcImage.width} × ${srcImage.height}`;
     alphaMask = null;
     detectedPixelSize = 0;
+    compareTopResults = [];
     clearEdgeCache();
     clearSrcPixelCache();
     clearSmallImgCache();
