@@ -73,10 +73,18 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
 
   <div class="section">
     <h3>网格尺寸</h3>
-    <label>宽度（格）<span class="val-display" id="val-gw">20</span></label>
-    <input type="range" id="rng-gw" min="4" max="40" value="20">
+    <button class="btn primary" id="btn-auto-grid" disabled>自动寻优网格</button>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn" id="btn-grid-smaller" disabled style="flex:1;padding:6px 0">− 缩小</button>
+      <button class="btn" id="btn-grid-larger"  disabled style="flex:1;padding:6px 0">+ 放大</button>
+    </div>
+    <div id="auto-grid-status" style="margin-top:6px;font-size:10px;color:#555577;min-height:14px">需要先抠图</div>
+    <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" id="progress-grid"></div></div>
+    <label style="margin-top:10px">宽度（格）<span class="val-display" id="val-gw">20</span></label>
+    <input type="range" id="rng-gw" min="4" max="50" value="20">
     <label style="margin-top:8px">高度（格）<span class="val-display" id="val-gh">20</span></label>
-    <input type="range" id="rng-gh" min="4" max="40" value="20">
+    <input type="range" id="rng-gh" min="4" max="50" value="20">
+    <div style="margin-top:6px;font-size:10px;color:#555577">手动调整后点「重新生成」</div>
   </div>
 
   <div class="section">
@@ -514,7 +522,7 @@ const rngBgThresh   = document.getElementById('rng-bg-thresh');
 const valBgThresh   = document.getElementById('val-bg-thresh');
 const chkRemoveBg   = document.getElementById('chk-remove-bg');
 rngBgThresh.oninput = ()=>{ valBgThresh.textContent=rngBgThresh.value; if(srcImage) scheduleProcess(); };
-chkRemoveBg.onchange = ()=>{ if(srcImage) scheduleProcess(); };
+chkRemoveBg.onchange = ()=>{ updateAutoGridBtn(); if(srcImage) scheduleProcess(); };
 
 // ── remove.bg 抠图 ──
 const rmbgKeyInput = document.getElementById('rmbg-key');
@@ -569,8 +577,9 @@ btnRmbg.onclick = async ()=>{
       rmbgStatus.textContent = `✓ 抠图完成（${rmbgImg.width}×${rmbgImg.height}）`;
       rmbgStatus.style.color = '#44cc44';
       btnRmbg.disabled = false;
-      // 自动重新处理
-      runProcess();
+      updateAutoGridBtn();
+      // 抠图完成后自动寻优网格
+      runAutoGrid();
     };
     rmbgImg.onerror = ()=>{ throw new Error('图片解析失败'); };
     rmbgImg.src = URL.createObjectURL(new Blob([buf], {type:'image/png'}));
@@ -588,6 +597,204 @@ function scheduleProcess(){ clearTimeout(processTimer); processTimer=setTimeout(
 
 btnProcess.onclick = ()=>runProcess();
 
+// ════════════════════════════════════════════════
+// 自动网格寻优
+// 遍历 GW=8..50，对每个尺寸：
+//   1. 按图片比例计算 GH
+//   2. 采样 alpha，得到前景格子集合
+//   3. 找外轮廓格子（四邻域含背景）
+//   4. 计算外轮廓格子平均占空率（前景像素/总像素）
+// 找第一个占空率 ≥ 目标阈值的尺寸，否则取最高占空率的尺寸
+// ════════════════════════════════════════════════
+
+const AUTO_GRID_TARGET = 0.90; // 外轮廓占空率目标
+
+function getAlphaGrid(gw, gh){
+  // 返回 Float32Array[gw*gh]，每格=该区域平均alpha/255
+  if(!alphaMask && !chkRemoveBg.checked) return null;
+
+  if(alphaMask){
+    const { imageData: aData, w: aw, h: ah } = alphaMask;
+    const grid = new Float32Array(gw * gh);
+    for(let gy=0; gy<gh; gy++){
+      for(let gx=0; gx<gw; gx++){
+        const x0=Math.floor(gx/gw*aw), x1=Math.ceil((gx+1)/gw*aw);
+        const y0=Math.floor(gy/gh*ah), y1=Math.ceil((gy+1)/gh*ah);
+        let sum=0, cnt=0;
+        for(let py=y0; py<Math.max(y1,y0+1); py++){
+          for(let px=x0; px<Math.max(x1,x0+1); px++){
+            sum += aData.data[(py*aw+px)*4+3];
+            cnt++;
+          }
+        }
+        grid[gy*gw+gx] = cnt > 0 ? sum / cnt / 255 : 0;
+      }
+    }
+    return grid;
+  }
+
+  // 备用：用原图 RGBA 的 alpha 通道
+  const offC = document.createElement('canvas');
+  offC.width = gw; offC.height = gh;
+  const ctx = offC.getContext('2d');
+  ctx.drawImage(srcImage, 0, 0, gw, gh);
+  const imgD = ctx.getImageData(0, 0, gw, gh);
+  const grid = new Float32Array(gw * gh);
+  for(let i=0; i<gw*gh; i++) grid[i] = imgD.data[i*4+3] / 255;
+  return grid;
+}
+
+// 计算某 (gw, gh) 下的外轮廓占空率
+function calcOutlineOccupancy(gw, gh, fgThreshold=0.3){
+  const grid = getAlphaGrid(gw, gh);
+  if(!grid) return null;
+
+  // 判断是否前景（alpha 均值 >= 阈值）
+  const isFg = (gx, gy) => {
+    if(gx<0||gx>=gw||gy<0||gy>=gh) return false;
+    return grid[gy*gw+gx] >= fgThreshold;
+  };
+
+  // 外轮廓格子：自身是前景，且至少一个四邻域是背景
+  let outlineCount = 0, outlineOccSum = 0;
+  for(let gy=0; gy<gh; gy++){
+    for(let gx=0; gx<gw; gx++){
+      if(!isFg(gx, gy)) continue;
+      const neighbors = [[gx-1,gy],[gx+1,gy],[gx,gy-1],[gx,gy+1]];
+      const hasBgNeighbor = neighbors.some(([nx,ny]) => !isFg(nx, ny));
+      if(!hasBgNeighbor) continue;
+
+      // 该格子在 alphaMask 里的真实占空率（前景像素比例）
+      outlineCount++;
+      outlineOccSum += grid[gy*gw+gx];
+    }
+  }
+
+  if(outlineCount === 0) return { gw, gh, outlineCount: 0, avgOcc: 0 };
+  return { gw, gh, outlineCount, avgOcc: outlineOccSum / outlineCount };
+}
+
+const btnAutoGrid = document.getElementById('btn-auto-grid');
+const autoGridStatus = document.getElementById('auto-grid-status');
+const progressGrid = document.getElementById('progress-grid');
+
+function updateAutoGridBtn(){
+  const hasAlpha = !!alphaMask || chkRemoveBg.checked;
+  const ready = !!srcImage && hasAlpha;
+  btnAutoGrid.disabled    = !ready;
+  btnGridSmaller.disabled = !ready;
+  btnGridLarger.disabled  = !ready;
+  autoGridStatus.textContent = srcImage
+    ? (hasAlpha ? '就绪，点击开始寻优' : '需要先抠图（remove.bg 或泛洪填充）')
+    : '需要先上传图片';
+}
+
+btnAutoGrid.onclick = ()=> runAutoGrid();
+
+const btnGridSmaller = document.getElementById('btn-grid-smaller');
+const btnGridLarger  = document.getElementById('btn-grid-larger');
+
+// 步进寻优：在当前 GW 基础上 ±1，重新找最优 GH
+function stepGrid(delta){
+  const curGW = parseInt(rngGW.value);
+  const newGW = Math.max(4, Math.min(50, curGW + delta));
+  if(newGW === curGW) return;
+
+  const imgAspect = srcImage.width / srcImage.height;
+  const baseGH = Math.max(4, Math.min(50, Math.round(newGW / imgAspect)));
+  const ghMin = Math.max(4, Math.round(baseGH * 0.8));
+  const ghMax = Math.min(50, Math.round(baseGH * 1.2));
+
+  let best = null;
+  for(let gh = ghMin; gh <= ghMax; gh++){
+    const r = calcOutlineOccupancy(newGW, gh);
+    if(r && r.outlineCount > 0 && (!best || r.avgOcc > best.avgOcc)) best = r;
+  }
+  if(!best){ best = { gw: newGW, gh: baseGH, outlineCount: 0, avgOcc: 0 }; }
+
+  rngGW.value = best.gw; valGW.textContent = best.gw;
+  rngGH.value = best.gh; valGH.textContent = best.gh;
+
+  const pct = (best.avgOcc * 100).toFixed(1);
+  autoGridStatus.textContent =
+    `${delta>0?'▲ 放大':'▼ 缩小'} → ${best.gw}×${best.gh}，轮廓占空率 ${pct}%，${best.outlineCount} 个轮廓格`;
+  autoGridStatus.style.color = best.avgOcc >= AUTO_GRID_TARGET ? '#44cc44' : '#ffaa44';
+
+  runProcess();
+}
+
+btnGridSmaller.onclick = ()=> stepGrid(-1);
+btnGridLarger.onclick  = ()=> stepGrid(+1);
+
+async function runAutoGrid(){
+  if(!srcImage) return;
+  btnAutoGrid.disabled = true;
+  autoGridStatus.textContent = '寻优中…';
+  autoGridStatus.style.color = '#8888aa';
+
+  // 异步逐步跑，不阻塞 UI
+  const results = [];
+  const imgAspect = srcImage.width / srcImage.height;
+  const gwList = [];
+  for(let gw=8; gw<=50; gw++) gwList.push(gw);
+
+  await new Promise(resolve => {
+    let i = 0;
+    function step(){
+      if(i >= gwList.length){ resolve(); return; }
+      const gw = gwList[i++];
+      // 按图片比例计算 gh，但限制在合理范围
+      const gh = Math.max(4, Math.min(50, Math.round(gw / imgAspect)));
+      const r = calcOutlineOccupancy(gw, gh);
+      if(r) results.push(r);
+      progressGrid.style.width = (i / gwList.length * 100).toFixed(0) + '%';
+      // 找到目标即可提前结束
+      if(r && r.avgOcc >= AUTO_GRID_TARGET){ resolve(); return; }
+      setTimeout(step, 0);
+    }
+    step();
+  });
+
+  if(results.length === 0){
+    autoGridStatus.textContent = '未找到有效结果（请先抠图）';
+    autoGridStatus.style.color = '#ff4444';
+    btnAutoGrid.disabled = false;
+    progressGrid.style.width = '0%';
+    return;
+  }
+
+  // 找第一个 avgOcc >= 目标的结果；否则取最大值
+  const best = results.find(r => r.avgOcc >= AUTO_GRID_TARGET)
+    || results.reduce((a, b) => a.avgOcc >= b.avgOcc ? a : b);
+
+  // 微调：在 best.gh ±20% 内找更优高度
+  const gwFixed = best.gw;
+  const ghMin = Math.max(4, Math.round(best.gh * 0.8));
+  const ghMax = Math.min(50, Math.round(best.gh * 1.2));
+  let bestFinal = best;
+  for(let gh=ghMin; gh<=ghMax; gh++){
+    const r = calcOutlineOccupancy(gwFixed, gh);
+    if(r && r.outlineCount > 0 && r.avgOcc > bestFinal.avgOcc) bestFinal = r;
+  }
+
+  // 写入滑块
+  rngGW.value = bestFinal.gw;
+  rngGH.value = bestFinal.gh;
+  valGW.textContent = bestFinal.gw;
+  valGH.textContent = bestFinal.gh;
+
+  const pct = (bestFinal.avgOcc * 100).toFixed(1);
+  autoGridStatus.textContent =
+    `✓ ${bestFinal.gw}×${bestFinal.gh}，轮廓占空率 ${pct}%，${bestFinal.outlineCount} 个轮廓格`;
+  autoGridStatus.style.color = bestFinal.avgOcc >= AUTO_GRID_TARGET ? '#44cc44' : '#ffaa44';
+
+  progressGrid.style.width = '100%';
+  setTimeout(()=>{ progressGrid.style.width='0%'; }, 800);
+
+  btnAutoGrid.disabled = false;
+  runProcess();
+}
+
 // 文件上传
 fileInput.onchange = (e)=>{
   const file = e.target.files[0];
@@ -602,6 +809,7 @@ fileInput.onchange = (e)=>{
     rmbgStatus.style.color = '#555577';
     btnProcess.disabled = false;
     updateRmbgBtn();
+    updateAutoGridBtn();
     runProcess();
   };
   srcImage.src = url;
