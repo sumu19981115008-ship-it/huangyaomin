@@ -88,14 +88,14 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
     <div id="auto-grid-status" style="margin-top:6px;font-size:10px;color:#555577;min-height:28px;line-height:1.6;white-space:pre-line">需要先抠图</div>
     <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" id="progress-grid"></div></div>
     <label style="margin-top:10px">宽度（格）<span class="val-display" id="val-gw">20</span></label>
-    <input type="range" id="rng-gw" min="4" max="50" value="20">
+    <input type="range" id="rng-gw" min="4" max="100" value="20">
     <label style="margin-top:8px">高度（格）<span class="val-display" id="val-gh">20</span></label>
-    <input type="range" id="rng-gh" min="4" max="50" value="20">
+    <input type="range" id="rng-gh" min="4" max="100" value="20">
     <div style="margin-top:6px;font-size:10px;color:#555577">手动调整后点「重新生成」</div>
   </div>
 
   <div class="section">
-    <h3>颜色控制</h3>
+    <h3>颜色控制 <span style="color:#5555cc;font-size:10px">（寻优时自动调整）</span></h3>
     <label>最大颜色数 <span class="val-display" id="val-colors">6</span></label>
     <input type="range" id="rng-colors" min="2" max="16" value="6">
     <label style="margin-top:8px">相似色合并阈值 <span class="val-display" id="val-thresh">25</span></label>
@@ -938,9 +938,9 @@ function updateAutoGridBtn(){
 // 方案 A：对 GW×GH 能被 K×10 整除的尺寸，评分加 5% 偏好
 function findBestGH(gw){
   const imgAspect = srcImage.width / srcImage.height;
-  const baseGH = Math.max(4, Math.min(50, Math.round(gw / imgAspect)));
+  const baseGH = Math.max(4, Math.min(100, Math.round(gw / imgAspect)));
   const ghMin = Math.max(4, Math.round(baseGH * 0.8));
-  const ghMax = Math.min(50, Math.round(baseGH * 1.2));
+  const ghMax = Math.min(100, Math.round(baseGH * 1.2));
   const K = parseInt(rngColors.value); // 当前颜色数上限
   let best = null, bestScore = -1;
   for(let gh=ghMin; gh<=ghMax; gh++){
@@ -982,41 +982,91 @@ document.getElementById('sel-score-mode').onchange = ()=>{
   if(r) applyGridResult(r, '◉');
 };
 
-// ── 全量自动寻优 ──
+// ── 全量自动寻优（三维：GW × 颜色数K × 合并阈值T）──
+// 目标：综合分 ≥ 80%；达标即停，否则取最优
+const AUTO_TARGET_SCORE = 0.80;
+
 async function runAutoGrid(){
   if(!srcImage) return;
-  btnAutoGrid.disabled = true;
-  autoGridStatus.textContent = '寻优中…';
+  btnAutoGrid.disabled    = true;
+  btnGridSmaller.disabled = true;
+  btnGridLarger.disabled  = true;
+  autoGridStatus.textContent = '三维寻优中…';
   autoGridStatus.style.color = '#8888aa';
 
-  const results = [];
+  // 搜索空间：GW 8~100，K 2~10，T 0/15/30/50（阈值几个典型值）
+  const gwList = [];
+  for(let g = 8; g <= 100; g++) gwList.push(g);
+  const kList = [2, 3, 4, 5, 6, 7, 8, 10];
+  const tList = [0, 15, 30, 50];
+  const total = gwList.length * kList.length * tList.length;
+
+  let bestResult = null, bestScore = -1;
+  let searched = 0;
 
   await new Promise(resolve => {
-    let gw = 8;
+    let gi = 0, ki = 0, ti = 0;
+
     function step(){
-      if(gw > 50){ resolve(); return; }
-      const r = findBestGH(gw++);
-      results.push(r);
-      progressGrid.style.width = ((gw-8) / 43 * 100).toFixed(0) + '%';
+      // 迭代索引
+      const gw = gwList[gi];
+      const K  = kList[ki];
+      const T  = tList[ti];
+
+      // 临时写入颜色滑块（影响 findBestGH 里的整除偏好和 K-Means）
+      rngColors.value = K; valColors.textContent = K;
+      rngThresh.value = T; valThresh.textContent = T;
+
+      const r = findBestGH(gw);
+      if(r){
+        // 用 combo 分（不受模式选择影响）作为寻优标准
+        const s = r.combo ?? primaryScore(r);
+        if(s > bestScore){
+          bestScore = s;
+          bestResult = { ...r, K, T };
+        }
+      }
+
+      searched++;
+      progressGrid.style.width = (searched / total * 100).toFixed(0) + '%';
+      autoGridStatus.textContent = `寻优中… GW=${gw} K=${K} T=${T}  当前最优综合 ${(bestScore*100).toFixed(1)}%`;
+
+      // 达标提前结束
+      if(bestScore >= AUTO_TARGET_SCORE){ resolve(); return; }
+
+      // 推进索引
+      ti++;
+      if(ti >= tList.length){ ti = 0; ki++; }
+      if(ki >= kList.length){ ki = 0; gi++; }
+      if(gi >= gwList.length){ resolve(); return; }
+
       setTimeout(step, 0);
     }
     step();
   });
 
-  if(results.length === 0){
+  if(!bestResult){
     autoGridStatus.textContent = '未找到有效结果（请先抠图）';
     autoGridStatus.style.color = '#ff4444';
-    btnAutoGrid.disabled = false;
+    updateAutoGridBtn();
     progressGrid.style.width = '0%';
     return;
   }
 
-  const best = results.reduce((a, b) => primaryScore(a) >= primaryScore(b) ? a : b);
-  applyGridResult(best, '✓');
+  // 写入最优参数
+  rngColors.value = bestResult.K; valColors.textContent = bestResult.K;
+  rngThresh.value = bestResult.T; valThresh.textContent = bestResult.T;
+  applyGridResult(bestResult, bestScore >= AUTO_TARGET_SCORE ? '✓' : '◎');
+
+  const reached = bestScore >= AUTO_TARGET_SCORE;
+  autoGridStatus.textContent =
+    `${reached ? '✓ 达标' : '◎ 最优'} ${bestResult.gw}×${bestResult.gh}  K=${bestResult.K}色  T=${bestResult.T}\n` +
+    `IoU ${(bestResult.iou*100).toFixed(1)}%  纯净 ${(bestResult.purity*100).toFixed(1)}%  对齐 ${(bestResult.edge*100).toFixed(1)}%  综合 ${(bestScore*100).toFixed(1)}%`;
+  autoGridStatus.style.color = reached ? '#44cc44' : '#ffaa44';
 
   progressGrid.style.width = '100%';
   setTimeout(()=>{ progressGrid.style.width='0%'; }, 800);
-  btnAutoGrid.disabled = false;
+  updateAutoGridBtn();
   runProcess();
 }
 
