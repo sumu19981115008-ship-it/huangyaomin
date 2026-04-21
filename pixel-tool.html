@@ -437,7 +437,106 @@ function assignWithQuota(rawCells, colorHexList, colorLabList, excludedColors){
     result[cellIndex.get(cell)] = { ...cell, colorHex: validHexes[assigned] };
   }
 
-  return result.filter(Boolean);
+  const assigned = result.filter(Boolean);
+
+  // ── 方案 B：边界格交换修正 ──
+  // 统计各颜色实际格数，对非10倍数颜色做最小误差修正
+  // 只在相邻颜色的边界格上操作（改动视觉影响最小）
+  fixToMultipleOfTen(assigned);
+
+  return assigned;
+}
+
+// 边界格交换修正：保证每种颜色格子数严格为10的倍数
+function fixToMultipleOfTen(cells){
+  // 统计各颜色数量
+  const countMap = {};
+  for(const c of cells) countMap[c.colorHex] = (countMap[c.colorHex] || 0) + 1;
+
+  // 计算各颜色需要补/减的格数（目标：向最近10倍数取整）
+  const delta = {}; // 正=需要增加，负=需要减少
+  for(const [hex, cnt] of Object.entries(countMap)){
+    const rem = cnt % 10;
+    if(rem === 0) continue;
+    // 就近取整：rem<=5 向下，rem>5 向上
+    delta[hex] = rem <= 5 ? -rem : (10 - rem);
+  }
+
+  // 没有需要修正的颜色就直接返回
+  if(Object.keys(delta).length === 0) return;
+
+  // 建立坐标索引，方便查找邻居
+  const posMap = new Map();
+  cells.forEach((c, i) => posMap.set(`${c.x},${c.y}`, i));
+
+  // 找边界格：该格与至少一个四邻域颜色不同
+  // 对于需要"减少"的颜色，找它的边界格；对于需要"增加"的颜色，从邻居边界格抢
+  // 核心：把"需要减少"颜色的边界格，改色给"需要增加"的颜色中颜色最近的一个
+
+  // 迭代直到所有 delta 归零（最多迭代总修正格数次，不会死循环）
+  const maxIter = Object.values(delta).reduce((a, b) => a + Math.abs(b), 0) * 2;
+  let iter = 0;
+
+  while(iter++ < maxIter){
+    // 找一个需要减少的颜色（delta < 0）
+    const srcHex = Object.keys(delta).find(h => delta[h] < 0);
+    if(!srcHex) break; // 所有颜色已满足或只剩需增加的（等待配对）
+
+    // 找一个需要增加的颜色（delta > 0）
+    const dstHex = Object.keys(delta).find(h => delta[h] > 0);
+    if(!dstHex) break;
+
+    // 找 srcHex 中，与 dstHex 格子相邻的边界格（颜色误差最小的优先）
+    const srcLab = rgbToLab(...hexToRgb(srcHex));
+    const dstLab = rgbToLab(...hexToRgb(dstHex));
+
+    let bestIdx = -1, bestDist = Infinity;
+    for(let i = 0; i < cells.length; i++){
+      const c = cells[i];
+      if(c.colorHex !== srcHex) continue;
+      // 检查是否与 dstHex 相邻
+      const neighbors = [[c.x-1,c.y],[c.x+1,c.y],[c.x,c.y-1],[c.x,c.y+1]];
+      const adjDst = neighbors.some(([nx,ny]) => {
+        const ni = posMap.get(`${nx},${ny}`);
+        return ni !== undefined && cells[ni].colorHex === dstHex;
+      });
+      if(!adjDst) continue;
+      // 计算该格改色的颜色误差（原色 Lab 距 dstLab 的距离）
+      const dist = deltaE(c.labColor, dstLab);
+      if(dist < bestDist){ bestDist = dist; bestIdx = i; }
+    }
+
+    if(bestIdx === -1){
+      // 找不到与 dstHex 相邻的格子，放宽：找 srcHex 中任意边界格
+      for(let i = 0; i < cells.length; i++){
+        const c = cells[i];
+        if(c.colorHex !== srcHex) continue;
+        const neighbors = [[c.x-1,c.y],[c.x+1,c.y],[c.x,c.y-1],[c.x,c.y+1]];
+        const isBoundary = neighbors.some(([nx,ny]) => {
+          const ni = posMap.get(`${nx},${ny}`);
+          return ni !== undefined && cells[ni].colorHex !== srcHex;
+        });
+        if(!isBoundary) continue;
+        const dist = deltaE(c.labColor, dstLab);
+        if(dist < bestDist){ bestDist = dist; bestIdx = i; }
+      }
+    }
+
+    if(bestIdx === -1) break; // 完全找不到边界格，放弃
+
+    // 执行颜色替换
+    cells[bestIdx] = { ...cells[bestIdx], colorHex: dstHex };
+    delta[srcHex]++;
+    delta[dstHex]--;
+    if(delta[srcHex] === 0) delete delta[srcHex];
+    if(delta[dstHex] === 0) delete delta[dstHex];
+  }
+}
+
+// hex → [r,g,b]
+function hexToRgb(hex){
+  const n = parseInt(hex.slice(1), 16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
 }
 
 // ════════════════════════════════════════════════
@@ -836,17 +935,23 @@ function updateAutoGridBtn(){
 }
 
 // 寻最优 GH（在给定 gw 下，±20% 高度范围内遍历）
+// 方案 A：对 GW×GH 能被 K×10 整除的尺寸，评分加 5% 偏好
 function findBestGH(gw){
   const imgAspect = srcImage.width / srcImage.height;
   const baseGH = Math.max(4, Math.min(50, Math.round(gw / imgAspect)));
   const ghMin = Math.max(4, Math.round(baseGH * 0.8));
   const ghMax = Math.min(50, Math.round(baseGH * 1.2));
-  let best = null;
+  const K = parseInt(rngColors.value); // 当前颜色数上限
+  let best = null, bestScore = -1;
   for(let gh=ghMin; gh<=ghMax; gh++){
     const r = calcGridScore(gw, gh);
-    if(r && (!best || primaryScore(r) > primaryScore(best))) best = r;
+    if(!r) continue;
+    let s = primaryScore(r);
+    // 整除加分：总格数能被 K×10 整除
+    if((gw * gh) % (K * 10) === 0) s *= 1.05;
+    if(s > bestScore){ bestScore = s; best = r; }
   }
-  return best || { gw, gh: baseGH, iou:0, purity:0, combo:0, ambigCount:0 };
+  return best || { gw, gh: baseGH, iou:0, purity:0, edge:0, combo:0, ambigCount:0 };
 }
 
 // 写入滑块并更新状态栏
