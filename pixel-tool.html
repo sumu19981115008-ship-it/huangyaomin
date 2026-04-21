@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>FixelFlow 2 — 像素化 & 关卡生成工具</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{display:flex;height:100vh;overflow:hidden;background:#0d0d1a;color:#ccccee;font-family:monospace;font-size:13px}
+
+/* ── 左侧控制面板 ── */
+#panel-left{width:260px;min-width:260px;display:flex;flex-direction:column;border-right:1px solid #2a2a50;overflow-y:auto}
+.section{padding:12px;border-bottom:1px solid #1c1c38}
+.section h3{font-size:11px;color:#6666aa;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+label{display:block;margin-bottom:4px;color:#9999cc}
+input[type=range]{width:100%;accent-color:#5555cc}
+input[type=number]{width:100%;background:#111128;border:1px solid #2a2a50;color:#ccccee;padding:4px 6px;border-radius:4px}
+input[type=file]{display:none}
+
+.upload-btn{display:block;width:100%;padding:10px;background:#1a1a3a;border:2px dashed #3333aa;border-radius:6px;color:#8888cc;text-align:center;cursor:pointer;transition:border-color .2s}
+.upload-btn:hover{border-color:#6666ff;color:#aaaaff}
+
+.btn{display:block;width:100%;padding:8px;margin-top:6px;background:#222244;border:1px solid #4444aa;border-radius:5px;color:#aaaaff;cursor:pointer;text-align:center;transition:background .15s}
+.btn:hover{background:#333366}
+.btn.primary{background:#3333aa;border-color:#6666ff;color:#ffffff}
+.btn.primary:hover{background:#4444cc}
+.btn.success{background:#1a4a1a;border-color:#44aa44;color:#88ff88}
+.btn.success:hover{background:#225522}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+.val-display{display:inline-block;float:right;color:#ffffff;min-width:28px;text-align:right}
+
+.color-palette{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.color-swatch{width:28px;height:28px;border-radius:4px;border:2px solid transparent;cursor:pointer;position:relative;transition:transform .1s}
+.color-swatch:hover{transform:scale(1.15)}
+.color-swatch.excluded{opacity:.3;border-color:#ff4444}
+.color-swatch .cnt{position:absolute;bottom:1px;right:2px;font-size:8px;color:rgba(255,255,255,.85);text-shadow:0 0 2px #000;pointer-events:none}
+
+.stat-row{display:flex;justify-content:space-between;margin-top:4px;color:#8888aa}
+.stat-row span:last-child{color:#ccccee}
+
+/* ── 中央画布区 ── */
+#panel-canvas{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#canvas-toolbar{padding:8px 12px;background:#0a0a18;border-bottom:1px solid #1c1c38;display:flex;gap:12px;align-items:center;flex-shrink:0}
+#canvas-toolbar span{color:#666688;font-size:11px}
+#canvas-toolbar strong{color:#aaaacc}
+#canvas-wrap{flex:1;overflow:auto;display:flex;gap:20px;padding:20px;align-items:flex-start;justify-content:center}
+.canvas-block{display:flex;flex-direction:column;align-items:center;gap:8px}
+.canvas-label{font-size:11px;color:#555577}
+canvas{image-rendering:pixelated;border:1px solid #2a2a50}
+
+/* ── 右侧输出面板 ── */
+#panel-right{width:240px;min-width:240px;display:flex;flex-direction:column;border-left:1px solid #2a2a50;overflow-y:auto}
+#json-preview{flex:1;overflow-y:auto;padding:10px;font-size:10px;color:#5555aa;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+#save-bar{padding:10px;border-top:1px solid #1c1c38}
+#save-msg{margin-top:6px;font-size:11px;color:#888888;min-height:16px;text-align:center}
+
+.progress-bar{width:100%;height:4px;background:#111128;border-radius:2px;overflow:hidden;margin-top:6px}
+.progress-fill{height:100%;background:#5555cc;transition:width .1s;width:0%}
+</style>
+</head>
+<body>
+
+<!-- ── 左侧控制面板 ── -->
+<div id="panel-left">
+
+  <div class="section">
+    <h3>上传图片</h3>
+    <label class="upload-btn" for="file-input" id="upload-label">
+      点击或拖拽图片到此处
+    </label>
+    <input type="file" id="file-input" accept="image/*">
+  </div>
+
+  <div class="section">
+    <h3>网格尺寸</h3>
+    <label>宽度（格）<span class="val-display" id="val-gw">20</span></label>
+    <input type="range" id="rng-gw" min="4" max="40" value="20">
+    <label style="margin-top:8px">高度（格）<span class="val-display" id="val-gh">20</span></label>
+    <input type="range" id="rng-gh" min="4" max="40" value="20">
+  </div>
+
+  <div class="section">
+    <h3>颜色控制</h3>
+    <label>最大颜色数 <span class="val-display" id="val-colors">6</span></label>
+    <input type="range" id="rng-colors" min="2" max="16" value="6">
+    <label style="margin-top:8px">相似色合并阈值 <span class="val-display" id="val-thresh">25</span></label>
+    <input type="range" id="rng-thresh" min="0" max="100" value="25">
+    <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+  </div>
+
+  <div class="section">
+    <h3>去除背景</h3>
+
+    <div style="margin-bottom:8px">
+      <label style="margin-bottom:4px">remove.bg API Key</label>
+      <div style="display:flex;gap:4px">
+        <input type="password" id="rmbg-key" placeholder="粘贴 API Key" style="flex:1;font-size:11px">
+        <button class="btn" id="btn-rmbg" style="width:auto;padding:4px 8px;margin:0;white-space:nowrap" disabled>抠图</button>
+      </div>
+      <div id="rmbg-status" style="margin-top:4px;font-size:10px;color:#555577">未使用</div>
+    </div>
+
+    <div style="border-top:1px solid #1c1c38;padding-top:8px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px">
+        <input type="checkbox" id="chk-remove-bg" style="width:auto;accent-color:#5555cc">
+        <span style="color:#777799">备用：泛洪填充去背景</span>
+      </label>
+      <label style="color:#888899">背景色差阈值 <span class="val-display" id="val-bg-thresh">20</span></label>
+      <input type="range" id="rng-bg-thresh" min="0" max="80" value="20">
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>当前调色板</h3>
+    <div id="color-palette" class="color-palette"></div>
+    <div class="stat-row"><span>颜色数</span><span id="stat-colors">—</span></div>
+    <div class="stat-row"><span>总格子数</span><span id="stat-cells">—</span></div>
+    <div class="stat-row" id="stat-warn" style="color:#ff8844;display:none">
+      <span>⚠ 含非10倍数颜色</span>
+    </div>
+    <button class="btn" id="btn-process" disabled>重新生成</button>
+  </div>
+
+  <div class="section">
+    <h3>生成关卡</h3>
+    <label>关卡编号</label>
+    <input type="number" id="level-num" min="1" max="999" value="305" style="margin-bottom:8px">
+    <label>队列数量</label>
+    <input type="number" id="lane-count" min="1" max="6" value="4" style="margin-bottom:8px">
+    <button class="btn success" id="btn-generate" disabled>生成关卡 JSON</button>
+  </div>
+
+</div>
+
+<!-- ── 中央画布区 ── -->
+<div id="panel-canvas">
+  <div id="canvas-toolbar">
+    <span>原图</span>
+    <strong id="info-orig">—</strong>
+    <span style="margin-left:12px">像素化结果</span>
+    <strong id="info-pixel">—</strong>
+    <span style="margin-left:auto;font-size:10px;color:#444466">点击调色板颜色可切换排除/包含</span>
+  </div>
+  <div id="canvas-wrap">
+    <div class="canvas-block">
+      <div class="canvas-label">原图</div>
+      <canvas id="canvas-orig"></canvas>
+    </div>
+    <div class="canvas-block">
+      <div class="canvas-label">像素化预览</div>
+      <canvas id="canvas-pixel"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ── 右侧输出面板 ── -->
+<div id="panel-right">
+  <div class="section" style="flex-shrink:0">
+    <h3>关卡 JSON 预览</h3>
+  </div>
+  <div id="json-preview">（尚未生成）</div>
+  <div id="save-bar">
+    <button class="btn primary" id="btn-save" disabled>保存到 levels/</button>
+    <div id="save-msg"></div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════
+// 工具函数
+// ════════════════════════════════════════════════
+
+// sRGB → 线性光
+function srgbToLinear(v){ v/=255; return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4); }
+// 线性光 → sRGB
+function linearToSrgb(v){ return v<=.0031308?v*12.92:1.055*Math.pow(v,1/2.4)-.055; }
+
+// RGB → CIEXYZ (D65)
+function rgbToXyz(r,g,b){
+  r=srgbToLinear(r); g=srgbToLinear(g); b=srgbToLinear(b);
+  return [
+    r*.4124564+g*.3575761+b*.1804375,
+    r*.2126729+g*.7151522+b*.0721750,
+    r*.0193339+g*.1191920+b*.9503041,
+  ];
+}
+// XYZ → Lab
+function xyzToLab(x,y,z){
+  const f=t=>t>.008856?Math.cbrt(t):(7.787*t+16/116);
+  x=f(x/.95047); y=f(y/1.00000); z=f(z/1.08883);
+  return [116*y-16, 500*(x-y), 200*(y-z)];
+}
+function rgbToLab(r,g,b){ return xyzToLab(...rgbToXyz(r,g,b)); }
+
+// CIE76 色差
+function deltaE(c1,c2){
+  const dl=c1[0]-c2[0],da=c1[1]-c2[1],db=c1[2]-c2[2];
+  return Math.sqrt(dl*dl+da*da+db*db);
+}
+
+// 将 [r,g,b] 转为 hex 字符串
+function rgbHex(r,g,b){
+  return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('').toUpperCase();
+}
+
+// ════════════════════════════════════════════════
+// K-Means 色彩量化
+// ════════════════════════════════════════════════
+
+function kMeansQuantize(pixels, k, maxIter=30){
+  // pixels: Uint8Array RGBA，返回 { palette: [[r,g,b],...], assignment: Int32Array }
+  const n = pixels.length / 4;
+
+  // 用 K-Means++ 初始化
+  const centers = [];
+  const firstIdx = Math.floor(Math.random() * n);
+  centers.push([pixels[firstIdx*4], pixels[firstIdx*4+1], pixels[firstIdx*4+2]]);
+
+  for(let ci=1; ci<k; ci++){
+    const dists = new Float32Array(n);
+    let sum = 0;
+    for(let i=0;i<n;i++){
+      const r=pixels[i*4],g=pixels[i*4+1],b=pixels[i*4+2];
+      let best=Infinity;
+      for(const c of centers){
+        const d=(r-c[0])**2+(g-c[1])**2+(b-c[2])**2;
+        if(d<best) best=d;
+      }
+      dists[i]=best; sum+=best;
+    }
+    let rnd = Math.random()*sum, acc=0;
+    for(let i=0;i<n;i++){ acc+=dists[i]; if(acc>=rnd){ centers.push([pixels[i*4],pixels[i*4+1],pixels[i*4+2]]); break; } }
+  }
+
+  const assignment = new Int32Array(n);
+  let changed = true;
+
+  for(let iter=0; iter<maxIter && changed; iter++){
+    changed = false;
+    // 分配
+    for(let i=0;i<n;i++){
+      const r=pixels[i*4],g=pixels[i*4+1],b=pixels[i*4+2];
+      let best=Infinity, bestK=0;
+      for(let ci=0;ci<centers.length;ci++){
+        const c=centers[ci];
+        const d=(r-c[0])**2+(g-c[1])**2+(b-c[2])**2;
+        if(d<best){best=d;bestK=ci;}
+      }
+      if(assignment[i]!==bestK){assignment[i]=bestK;changed=true;}
+    }
+    // 重算中心
+    const sums = Array.from({length:k},()=>[0,0,0,0]);
+    for(let i=0;i<n;i++){
+      const s=sums[assignment[i]];
+      s[0]+=pixels[i*4]; s[1]+=pixels[i*4+1]; s[2]+=pixels[i*4+2]; s[3]++;
+    }
+    for(let ci=0;ci<k;ci++){
+      if(sums[ci][3]>0){
+        centers[ci]=[sums[ci][0]/sums[ci][3], sums[ci][1]/sums[ci][3], sums[ci][2]/sums[ci][3]];
+      }
+    }
+  }
+
+  // 收敛后：每个聚类取离均值最近的真实像素作为代表色
+  // 保证调色板里的颜色全部来自原图，不会出现插值幻色
+  const realPalette = centers.map((center, ci) => {
+    let bestDist = Infinity, bestR = center[0], bestG = center[1], bestB = center[2];
+    for(let i = 0; i < n; i++){
+      if(assignment[i] !== ci) continue;
+      const r=pixels[i*4], g=pixels[i*4+1], b=pixels[i*4+2];
+      const d=(r-center[0])**2+(g-center[1])**2+(b-center[2])**2;
+      if(d < bestDist){ bestDist=d; bestR=r; bestG=g; bestB=b; }
+    }
+    return [bestR, bestG, bestB];
+  });
+
+  return { palette: realPalette, assignment };
+}
+
+// ════════════════════════════════════════════════
+// 相似色合并（LAB 色差 < 阈值，贪心 Union-Find）
+// ════════════════════════════════════════════════
+
+function mergeSimilarColors(palette, assignment, threshold){
+  const k = palette.length;
+  const n = assignment.length;
+  const counts = new Array(k).fill(0);
+  for(let i=0;i<n;i++) counts[assignment[i]]++;
+  const labs = palette.map(([r,g,b])=>rgbToLab(r,g,b));
+
+  // Union-Find
+  const parent = Array.from({length:k},(_,i)=>i);
+  function find(x){ while(parent[x]!==x) x=parent[x]=parent[parent[x]]; return x; }
+  function union(a,b){ parent[find(a)]=find(b); }
+
+  // 收集所有色差 < 阈值的颜色对，按距离升序合并
+  const pairs = [];
+  for(let i=0;i<k;i++) for(let j=i+1;j<k;j++){
+    const d = deltaE(labs[i], labs[j]);
+    if(d < threshold) pairs.push([d,i,j]);
+  }
+  pairs.sort((a,b)=>a[0]-b[0]);
+  for(const [,i,j] of pairs) union(i,j);
+
+  // 收集根节点 → 聚类代表色
+  // 用加权均值作为目标，然后从被合并的各聚类中选最近的真实颜色
+  const rootSums = {};
+  for(let ci=0;ci<k;ci++){
+    const root = find(ci);
+    if(!rootSums[root]) rootSums[root]=[0,0,0,0];
+    rootSums[root][0]+=palette[ci][0]*counts[ci];
+    rootSums[root][1]+=palette[ci][1]*counts[ci];
+    rootSums[root][2]+=palette[ci][2]*counts[ci];
+    rootSums[root][3]+=counts[ci];
+  }
+  const uniqueRoots = Object.keys(rootSums).map(Number);
+  const rootColors = {};
+  for(const root of uniqueRoots){
+    const s = rootSums[root];
+    const avg = s[3]>0 ? [s[0]/s[3], s[1]/s[3], s[2]/s[3]] : [0,0,0];
+    // 从隶属该根的所有聚类里，选真实颜色中离均值最近的
+    let bestDist = Infinity, bestColor = avg.map(Math.round);
+    for(let ci=0;ci<k;ci++){
+      if(find(ci) !== root) continue;
+      const [r,g,b] = palette[ci];
+      const d=(r-avg[0])**2+(g-avg[1])**2+(b-avg[2])**2;
+      if(d < bestDist){ bestDist=d; bestColor=[r,g,b]; }
+    }
+    rootColors[root] = bestColor;
+  }
+  // mergeMap[原聚类] = 根节点
+  const mergeMap = Array.from({length:k},(_,i)=>find(i));
+  return { mergeMap, uniqueRoots, rootColors };
+}
+
+// ════════════════════════════════════════════════
+// 配额约束分配：保证每种颜色格子数严格为10的倍数
+//
+// 算法：
+//  1. 根据 K-Means 自然比例计算每种颜色的初始配额（10的倍数，总和≤N）
+//  2. 把剩余格子补给比例最大的颜色（每次+10），直到总配额=N
+//  3. 用"置信度优先"贪心分配：
+//     对每个格子计算 (最近色距离 - 次近色距离)，差值越大越"确信"
+//     按置信度从高到低依次分配，配额满的颜色不再接收
+//  4. 所有格子都会被分配（不丢弃），保证无黑点
+// ════════════════════════════════════════════════
+
+function assignWithQuota(rawCells, colorHexList, colorLabList, excludedColors){
+  // 过滤排除色
+  const validHexes = colorHexList.filter(h => !excludedColors.has(h));
+  const validLabs  = validHexes.map((_,i) => colorLabList[colorHexList.indexOf(validHexes[i])]);
+
+  if(validHexes.length === 0) return [];
+
+  const C = validHexes.length;
+  const N = rawCells.length;
+
+  // 1. 自然分配：每个格子先指定到最近颜色，统计初始数量
+  const naturalCount = new Array(C).fill(0);
+  for(const cell of rawCells){
+    let best=Infinity, bi=0;
+    for(let ci=0;ci<C;ci++){
+      const d=deltaE(cell.labColor, validLabs[ci]);
+      if(d<best){best=d;bi=ci;}
+    }
+    naturalCount[bi]++;
+  }
+
+  // 2. 计算配额（向下取到10的倍数，最小10）
+  const quota = naturalCount.map(n => Math.max(10, Math.floor(n/10)*10));
+  let total = quota.reduce((a,b)=>a+b, 0);
+
+  // 3. 差额补偿：total < N 时，把剩余名额按自然比例补给，每次+10给比例最大的
+  //    差额一定是10的倍数（因为N=GW*GH，所有配额都是10的倍数）
+  //    如果N本身不是10的倍数，补到最近的更大10的倍数
+  const targetN = Math.ceil(N/10)*10;
+  // 需要增发的额度
+  while(total < targetN){
+    // 找当前"欠额比例"最大的颜色（naturalCount[i]/quota[i] 最大的）
+    let bestRatio = -1, bestCI = 0;
+    for(let ci=0;ci<C;ci++){
+      const ratio = naturalCount[ci] / quota[ci];
+      if(ratio > bestRatio){ bestRatio=ratio; bestCI=ci; }
+    }
+    quota[bestCI] += 10;
+    total += 10;
+  }
+
+  // 4. 置信度排序分配
+  //    置信度 = (最近色距离 - 次近色距离) 的绝对差，越大越确信
+  const scored = rawCells.map(cell => {
+    const dists = validLabs.map(lab => deltaE(cell.labColor, lab));
+    const sorted = [...dists].sort((a,b)=>a-b);
+    const best1 = sorted[0];
+    const best2 = sorted[1] ?? best1;
+    const bi = dists.indexOf(best1);
+    return { cell, bi, confidence: best2 - best1 };
+  });
+  // 置信度高的先分配（更确信归属哪个颜色）
+  scored.sort((a,b) => b.confidence - a.confidence);
+
+  const remaining = [...quota]; // 各颜色剩余配额
+  const result = new Array(rawCells.length);
+  // 建立 cell → result 索引的映射（rawCells 顺序）
+  const cellIndex = new Map(rawCells.map((c,i)=>[c,i]));
+
+  for(const { cell, bi, confidence } of scored){
+    let assigned = -1;
+    // 优先分配到最近颜色
+    if(remaining[bi] > 0){
+      assigned = bi;
+    } else {
+      // 最近颜色满了，找下一个未满的最近颜色
+      const dists = validLabs.map(lab => deltaE(cell.labColor, lab));
+      const order = [...Array(C).keys()].sort((a,b)=>dists[a]-dists[b]);
+      for(const ci of order){
+        if(remaining[ci] > 0){ assigned=ci; break; }
+      }
+    }
+    if(assigned === -1) assigned = remaining.findIndex(r=>r>0);
+    remaining[assigned]--;
+    result[cellIndex.get(cell)] = { ...cell, colorHex: validHexes[assigned] };
+  }
+
+  return result.filter(Boolean);
+}
+
+// ════════════════════════════════════════════════
+// 泛洪填充去背景
+// 从四个角出发，把与角落颜色色差 < threshold 的连通区域标记为背景
+// 返回 Set<"x,y"> 表示背景格子坐标
+// ════════════════════════════════════════════════
+
+function floodFillBg(cells, GW, GH, threshold){
+  // 建立坐标 → Lab 映射
+  const labMap = new Map();
+  for(const c of cells) labMap.set(`${c.x},${c.y}`, c.labColor);
+
+  const bgSet = new Set();
+
+  // 四个角的种子
+  const corners = [[0,0],[GW-1,0],[0,GH-1],[GW-1,GH-1]];
+  for(const [sx, sy] of corners){
+    const key = `${sx},${sy}`;
+    if(bgSet.has(key)) continue;
+    const seedLab = labMap.get(key);
+    if(!seedLab) continue;
+
+    const queue = [[sx, sy]];
+    bgSet.add(key);
+
+    while(queue.length){
+      const [x, y] = queue.pop();
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = x+dx, ny = y+dy;
+        if(nx<0||nx>=GW||ny<0||ny>=GH) continue;
+        const nk = `${nx},${ny}`;
+        if(bgSet.has(nk)) continue;
+        const nLab = labMap.get(nk);
+        if(!nLab) continue;
+        if(deltaE(seedLab, nLab) <= threshold){
+          bgSet.add(nk);
+          queue.push([nx, ny]);
+        }
+      }
+    }
+  }
+
+  return bgSet;
+}
+
+// ════════════════════════════════════════════════
+// 状态
+// ════════════════════════════════════════════════
+
+let srcImage    = null;
+let alphaMask   = null; // Float32Array[GW*GH]，0=背景，1=前景，由 remove.bg 或泛洪填充生成
+let currentCells   = [];
+let currentPalette = {};
+let generatedLevel = null;
+const excludedColors = new Set();
+
+// ════════════════════════════════════════════════
+// DOM 绑定
+// ════════════════════════════════════════════════
+
+const fileInput    = document.getElementById('file-input');
+const uploadLabel  = document.getElementById('upload-label');
+const rngGW        = document.getElementById('rng-gw');
+const rngGH        = document.getElementById('rng-gh');
+const rngColors    = document.getElementById('rng-colors');
+const rngThresh    = document.getElementById('rng-thresh');
+const valGW        = document.getElementById('val-gw');
+const valGH        = document.getElementById('val-gh');
+const valColors    = document.getElementById('val-colors');
+const valThresh    = document.getElementById('val-thresh');
+const btnProcess   = document.getElementById('btn-process');
+const btnGenerate  = document.getElementById('btn-generate');
+const btnSave      = document.getElementById('btn-save');
+const btnGenLevel  = document.getElementById('btn-generate');
+const canvasOrig   = document.getElementById('canvas-orig');
+const canvasPixel  = document.getElementById('canvas-pixel');
+const colorPalette = document.getElementById('color-palette');
+const jsonPreview  = document.getElementById('json-preview');
+const saveMsg      = document.getElementById('save-msg');
+const progress     = document.getElementById('progress');
+
+// 滑块联动显示
+rngGW.oninput       = ()=>{ valGW.textContent=rngGW.value; if(srcImage) scheduleProcess(); };
+rngGH.oninput       = ()=>{ valGH.textContent=rngGH.value; if(srcImage) scheduleProcess(); };
+rngColors.oninput   = ()=>{ valColors.textContent=rngColors.value; if(srcImage) scheduleProcess(); };
+rngThresh.oninput   = ()=>{ valThresh.textContent=rngThresh.value; if(srcImage) scheduleProcess(); };
+const rngBgThresh   = document.getElementById('rng-bg-thresh');
+const valBgThresh   = document.getElementById('val-bg-thresh');
+const chkRemoveBg   = document.getElementById('chk-remove-bg');
+rngBgThresh.oninput = ()=>{ valBgThresh.textContent=rngBgThresh.value; if(srcImage) scheduleProcess(); };
+chkRemoveBg.onchange = ()=>{ if(srcImage) scheduleProcess(); };
+
+// ── remove.bg 抠图 ──
+const rmbgKeyInput = document.getElementById('rmbg-key');
+const btnRmbg      = document.getElementById('btn-rmbg');
+const rmbgStatus   = document.getElementById('rmbg-status');
+
+// 上传图片后才能点抠图
+function updateRmbgBtn(){ btnRmbg.disabled = !srcImage || !rmbgKeyInput.value.trim(); }
+rmbgKeyInput.oninput = updateRmbgBtn;
+
+btnRmbg.onclick = async ()=>{
+  const apiKey = rmbgKeyInput.value.trim();
+  if(!srcImage || !apiKey) return;
+
+  rmbgStatus.textContent = '请求中…';
+  rmbgStatus.style.color = '#8888aa';
+  btnRmbg.disabled = true;
+
+  try{
+    // 把当前图片转成 blob
+    const offC = document.createElement('canvas');
+    offC.width = srcImage.width; offC.height = srcImage.height;
+    offC.getContext('2d').drawImage(srcImage, 0, 0);
+    const blob = await new Promise(res => offC.toBlob(res, 'image/png'));
+
+    const form = new FormData();
+    form.append('image_file', blob, 'image.png');
+    form.append('size', 'auto');
+
+    const res = await fetch('https://api.remove.bg/v1.0/removebg', {
+      method: 'POST',
+      headers: { 'X-Api-Key': apiKey },
+      body: form,
+    });
+
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err?.errors?.[0]?.title || `HTTP ${res.status}`);
+    }
+
+    // 解析返回的透明 PNG，提取 alpha 通道
+    const buf  = await res.arrayBuffer();
+    const rmbgImg = new Image();
+    rmbgImg.onload = ()=>{
+      // 把 remove.bg 结果画到离屏 canvas，读 alpha 通道
+      const ac = document.createElement('canvas');
+      ac.width = rmbgImg.width; ac.height = rmbgImg.height;
+      ac.getContext('2d').drawImage(rmbgImg, 0, 0);
+      // 保存原始尺寸 alpha 数据（runProcess 时按网格采样）
+      alphaMask = { imageData: ac.getContext('2d').getImageData(0,0,ac.width,ac.height), w: ac.width, h: ac.height };
+
+      rmbgStatus.textContent = `✓ 抠图完成（${rmbgImg.width}×${rmbgImg.height}）`;
+      rmbgStatus.style.color = '#44cc44';
+      btnRmbg.disabled = false;
+      // 自动重新处理
+      runProcess();
+    };
+    rmbgImg.onerror = ()=>{ throw new Error('图片解析失败'); };
+    rmbgImg.src = URL.createObjectURL(new Blob([buf], {type:'image/png'}));
+
+  } catch(e){
+    rmbgStatus.textContent = `✗ ${e.message}`;
+    rmbgStatus.style.color = '#ff4444';
+    btnRmbg.disabled = false;
+  }
+};
+
+// 防抖处理
+let processTimer = null;
+function scheduleProcess(){ clearTimeout(processTimer); processTimer=setTimeout(runProcess,400); }
+
+btnProcess.onclick = ()=>runProcess();
+
+// 文件上传
+fileInput.onchange = (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  uploadLabel.textContent = file.name;
+  const url = URL.createObjectURL(file);
+  srcImage = new Image();
+  srcImage.onload = ()=>{
+    document.getElementById('info-orig').textContent = `${srcImage.width} × ${srcImage.height}`;
+    alphaMask = null; // 新图片，清除旧 mask
+    rmbgStatus.textContent = '未使用';
+    rmbgStatus.style.color = '#555577';
+    btnProcess.disabled = false;
+    updateRmbgBtn();
+    runProcess();
+  };
+  srcImage.src = url;
+};
+
+// 拖拽上传
+document.addEventListener('dragover', e=>e.preventDefault());
+document.addEventListener('drop', e=>{
+  e.preventDefault();
+  const file = e.dataTransfer?.files[0];
+  if(!file || !file.type.startsWith('image/')) return;
+  fileInput.files = e.dataTransfer.files;
+  fileInput.dispatchEvent(new Event('change'));
+});
+
+// ════════════════════════════════════════════════
+// 主处理流程
+// ════════════════════════════════════════════════
+
+function setProgress(pct){ progress.style.width = pct+'%'; }
+
+function runProcess(){
+  if(!srcImage) return;
+  setProgress(10);
+
+  const GW = parseInt(rngGW.value);
+  const GH = parseInt(rngGH.value);
+  const maxColors = parseInt(rngColors.value);
+  const threshold = parseInt(rngThresh.value);
+
+  // 1. 原图绘制（缩放显示，最大300px）
+  const dispScale = Math.min(300/srcImage.width, 300/srcImage.height, 1);
+  canvasOrig.width  = Math.round(srcImage.width  * dispScale);
+  canvasOrig.height = Math.round(srcImage.height * dispScale);
+  const ctxOrig = canvasOrig.getContext('2d');
+  ctxOrig.drawImage(srcImage, 0, 0, canvasOrig.width, canvasOrig.height);
+
+  // 2. 将图片缩放到 GW×GH，采样像素
+  const offscreen = document.createElement('canvas');
+  offscreen.width = GW; offscreen.height = GH;
+  const ctxOff = offscreen.getContext('2d');
+  ctxOff.drawImage(srcImage, 0, 0, GW, GH);
+  const imgData = ctxOff.getImageData(0, 0, GW, GH);
+  const pixels = imgData.data; // RGBA
+
+  const removeBg   = chkRemoveBg.checked;
+  const bgThreshold = parseInt(rngBgThresh.value);
+
+  setProgress(25);
+
+  // 3. K-Means 量化（在 setTimeout 中执行避免阻塞 UI）
+  setTimeout(()=>{
+    const k = Math.min(maxColors, GW*GH);
+    const { palette, assignment } = kMeansQuantize(pixels, k);
+
+    setProgress(55);
+
+    // 4. 相似色合并
+    const { mergeMap, uniqueRoots, rootColors } = mergeSimilarColors(palette, assignment, threshold);
+
+    setProgress(65);
+
+    // 5. 构建 rawCells（带原始像素 Lab，供配额分配用）
+    const rawCells = [];
+    for(let y=0;y<GH;y++){
+      for(let x=0;x<GW;x++){
+        const i = y*GW+x;
+        const pr=pixels[i*4], pg=pixels[i*4+1], pb=pixels[i*4+2];
+        rawCells.push({ x, y, labColor: rgbToLab(pr,pg,pb) });
+      }
+    }
+
+    // 6. 确定背景格子
+    let bgSet = new Set();
+
+    if(alphaMask){
+      // 优先用 remove.bg alpha 通道：把原图尺寸 alpha 采样到 GW×GH 网格
+      const { imageData: aData, w: aw, h: ah } = alphaMask;
+      for(let gy=0;gy<GH;gy++){
+        for(let gx=0;gx<GW;gx++){
+          // 取该格子对应区域的平均 alpha
+          const x0=Math.floor(gx/GW*aw), x1=Math.floor((gx+1)/GW*aw);
+          const y0=Math.floor(gy/GH*ah), y1=Math.floor((gy+1)/GH*ah);
+          let sum=0, cnt=0;
+          for(let py=y0;py<Math.max(y1,y0+1);py++){
+            for(let px=x0;px<Math.max(x1,x0+1);px++){
+              sum += aData.data[(py*aw+px)*4+3];
+              cnt++;
+            }
+          }
+          if(sum/cnt < 64) bgSet.add(`${gx},${gy}`); // alpha < 25% 视为背景
+        }
+      }
+    } else if(removeBg){
+      // 备用：泛洪填充
+      const tempCells = rawCells.map(cell => {
+        let best=Infinity, bi=0;
+        uniqueRoots.forEach((r,ri)=>{
+          const d = deltaE(cell.labColor, rgbToLab(...rootColors[r]));
+          if(d<best){best=d;bi=ri;}
+        });
+        return { ...cell, colorHex: rgbHex(...rootColors[uniqueRoots[bi]]) };
+      });
+      bgSet = floodFillBg(tempCells, GW, GH, bgThreshold);
+    }
+
+    // 7. 过滤掉背景格子
+    const activeCells = rawCells.filter(c => !bgSet.has(`${c.x},${c.y}`));
+
+    // 8. 收集合并后的颜色列表和 Lab 中心
+    const colorHexList = uniqueRoots.map(r => rgbHex(...rootColors[r]));
+    const colorLabList = uniqueRoots.map(r => rgbToLab(...rootColors[r]));
+
+    setProgress(75);
+
+    // 9. 配额约束分配：严格保证每色格子数为10的倍数，不丢弃任何格子
+    const finalCells = assignWithQuota(activeCells, colorHexList, colorLabList, excludedColors);
+
+    setProgress(90);
+
+    // 10. 统计调色板
+    const paletteMap = {};
+    for(const c of finalCells){
+      paletteMap[c.colorHex] = (paletteMap[c.colorHex]||0)+1;
+    }
+
+    currentCells   = finalCells;
+    currentPalette = paletteMap;
+
+    // 11. 绘制像素化预览
+    const PREVIEW_CELL = Math.max(4, Math.min(20, Math.floor(360/Math.max(GW,GH))));
+    canvasPixel.width  = GW * PREVIEW_CELL;
+    canvasPixel.height = GH * PREVIEW_CELL;
+    const ctxPx = canvasPixel.getContext('2d');
+    ctxPx.fillStyle = '#0d0d1a';
+    ctxPx.fillRect(0,0,canvasPixel.width,canvasPixel.height);
+
+    for(const c of finalCells){
+      ctxPx.fillStyle = c.colorHex;
+      ctxPx.fillRect(c.x*PREVIEW_CELL, c.y*PREVIEW_CELL, PREVIEW_CELL-1, PREVIEW_CELL-1);
+    }
+    // 背景格子用半透明标记（方便看轮廓）
+    if(removeBg && bgSet.size > 0){
+      ctxPx.fillStyle = 'rgba(255,0,100,0.12)';
+      for(const key of bgSet){
+        const [bx,by] = key.split(',').map(Number);
+        ctxPx.fillRect(bx*PREVIEW_CELL, by*PREVIEW_CELL, PREVIEW_CELL-1, PREVIEW_CELL-1);
+      }
+    }
+
+    document.getElementById('info-pixel').textContent =
+      `${GW} × ${GH}，${Object.keys(paletteMap).length} 色，${finalCells.length} 格` +
+      (bgSet.size > 0 ? `（去除背景 ${bgSet.size} 格）` : '');
+
+    // 9. 更新调色板 UI
+    updatePaletteUI(paletteMap);
+
+    setProgress(100);
+    setTimeout(()=>setProgress(0), 600);
+
+    btnGenerate.disabled = finalCells.length === 0;
+    generatedLevel = null;
+    btnSave.disabled = true;
+    jsonPreview.textContent = '（点击"生成关卡 JSON"）';
+  }, 0);
+}
+
+function updatePaletteUI(paletteMap){
+  colorPalette.innerHTML = '';
+  const warn = document.getElementById('stat-warn');
+  let hasNonTen = false;
+
+  const sorted = Object.entries(paletteMap).sort((a,b)=>b[1]-a[1]);
+  for(const [hex, cnt] of sorted){
+    const sw = document.createElement('div');
+    sw.className = 'color-swatch' + (excludedColors.has(hex)?' excluded':'');
+    sw.style.background = hex;
+    sw.title = `${hex}  ×${cnt}`;
+    const label = document.createElement('span');
+    label.className = 'cnt';
+    label.textContent = cnt;
+    sw.appendChild(label);
+    sw.onclick = ()=>{
+      if(excludedColors.has(hex)) excludedColors.delete(hex);
+      else excludedColors.add(hex);
+      runProcess();
+    };
+    colorPalette.appendChild(sw);
+    if(cnt % 10 !== 0) hasNonTen = true;
+  }
+
+  document.getElementById('stat-colors').textContent = sorted.length;
+  document.getElementById('stat-cells').textContent  = Object.values(paletteMap).reduce((a,b)=>a+b,0);
+  warn.style.display = hasNonTen ? 'flex' : 'none';
+}
+
+// ════════════════════════════════════════════════
+// 生成关卡 JSON
+// ════════════════════════════════════════════════
+
+btnGenerate.onclick = ()=>{
+  if(currentCells.length === 0) return;
+
+  const GW = parseInt(rngGW.value);
+  const GH = parseInt(rngGH.value);
+  const numLanes = parseInt(document.getElementById('lane-count').value);
+
+  // 按颜色分组
+  const colorGroups = {};
+  for(const c of currentCells){
+    if(!colorGroups[c.colorHex]) colorGroups[c.colorHex]=[];
+    colorGroups[c.colorHex].push({x:c.x, y:c.y});
+  }
+
+  // 构建 entities
+  const entities = Object.entries(colorGroups).map(([color, cells])=>({
+    type: 'PixelBlock',
+    color,
+    cells,
+  }));
+
+  // 构建 lanes（弹药 = cells数/2 向上取整，已是10的倍数所以一定整除）
+  // 将炮车均匀分配到各队列
+  const allTurretDefs = [];
+  for(const [color, cells] of Object.entries(colorGroups)){
+    const ammo = Math.max(10, Math.ceil(cells.length / 2 / 10) * 10);
+    allTurretDefs.push({ color, ammo });
+  }
+
+  // 按数量降序排列（让大颜色优先分配）
+  allTurretDefs.sort((a,b)=>{
+    const ca = colorGroups[a.color].length;
+    const cb = colorGroups[b.color].length;
+    return cb - ca;
+  });
+
+  const lanes = Array.from({length: numLanes}, ()=>[]);
+  allTurretDefs.forEach((def, i)=> lanes[i % numLanes].push(def));
+
+  const levelNum = parseInt(document.getElementById('level-num').value);
+
+  generatedLevel = {
+    boardWidth:  GW,
+    boardHeight: GH,
+    boardSize:   Math.max(GW, GH),
+    numberOfLanes: numLanes,
+    entities,
+    lanes,
+    turrets: [],
+  };
+
+  const jsonStr = JSON.stringify(generatedLevel, null, 2);
+  jsonPreview.textContent = jsonStr.length > 4000
+    ? jsonStr.slice(0, 4000) + '\n\n... (已截断，完整数据将正常保存)'
+    : jsonStr;
+
+  btnSave.disabled = false;
+  saveMsg.textContent = `准备保存 level${levelNum}.json`;
+  saveMsg.style.color = '#8888aa';
+};
+
+// ════════════════════════════════════════════════
+// 保存关卡
+// ════════════════════════════════════════════════
+
+btnSave.onclick = async ()=>{
+  if(!generatedLevel) return;
+  const levelNum = parseInt(document.getElementById('level-num').value);
+  const filename = `level${levelNum}.json`;
+  saveMsg.textContent = '保存中...';
+  saveMsg.style.color = '#8888aa';
+  try{
+    const res = await fetch('/api/save-level',{
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ filename, data: generatedLevel }),
+    });
+    const json = await res.json();
+    if(json.ok){
+      saveMsg.textContent = `✓ 已保存 ${filename}`;
+      saveMsg.style.color = '#44cc44';
+    } else {
+      saveMsg.textContent = `✗ ${json.error}`;
+      saveMsg.style.color = '#ff4444';
+    }
+  } catch(e){
+    saveMsg.textContent = `✗ 网络错误：${e.message}`;
+    saveMsg.style.color = '#ff4444';
+  }
+};
+</script>
+</body>
+</html>
