@@ -77,14 +77,15 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
     <select id="sel-score-mode" style="width:100%;background:#111128;border:1px solid #2a2a50;color:#ccccee;padding:4px 6px;border-radius:4px;margin-bottom:8px">
       <option value="iou">形状 IoU（交并比，最形似）</option>
       <option value="ambig">歧义格最小（轮廓最干净）</option>
-      <option value="combo" selected>综合（IoU × 纯净度）</option>
+      <option value="edge">边缘对齐（网格线贴边缘）</option>
+      <option value="combo" selected>综合（IoU × 纯净度 × 对齐）</option>
     </select>
     <button class="btn primary" id="btn-auto-grid" disabled>自动寻优网格</button>
     <div style="display:flex;gap:6px;margin-top:6px">
       <button class="btn" id="btn-grid-smaller" disabled style="flex:1;padding:6px 0">− 缩小</button>
       <button class="btn" id="btn-grid-larger"  disabled style="flex:1;padding:6px 0">+ 放大</button>
     </div>
-    <div id="auto-grid-status" style="margin-top:6px;font-size:10px;color:#555577;min-height:28px;line-height:1.6">需要先抠图</div>
+    <div id="auto-grid-status" style="margin-top:6px;font-size:10px;color:#555577;min-height:28px;line-height:1.6;white-space:pre-line">需要先抠图</div>
     <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" id="progress-grid"></div></div>
     <label style="margin-top:10px">宽度（格）<span class="val-display" id="val-gw">20</span></label>
     <input type="range" id="rng-gw" min="4" max="50" value="20">
@@ -579,6 +580,7 @@ btnRmbg.onclick = async ()=>{
       ac.getContext('2d').drawImage(rmbgImg, 0, 0);
       // 保存原始尺寸 alpha 数据（runProcess 时按网格采样）
       alphaMask = { imageData: ac.getContext('2d').getImageData(0,0,ac.width,ac.height), w: ac.width, h: ac.height };
+      clearEdgeCache();
 
       rmbgStatus.textContent = `✓ 抠图完成（${rmbgImg.width}×${rmbgImg.height}）`;
       rmbgStatus.style.color = '#44cc44';
@@ -612,6 +614,124 @@ btnProcess.onclick = ()=>runProcess();
 //   4. 计算外轮廓格子平均占空率（前景像素/总像素）
 // 找第一个占空率 ≥ 目标阈值的尺寸，否则取最高占空率的尺寸
 // ════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════
+// Sobel 边缘图（惰性缓存，alphaMask 变化时清除）
+// edgeMap[y*W + x] = 0..1，原图尺寸
+// ════════════════════════════════════════════════
+
+let _edgeCache = null; // { map: Float32Array, w, h }
+
+function getEdgeMap(){
+  if(_edgeCache) return _edgeCache;
+
+  // 取 alpha 源：优先 alphaMask，其次原图自身 alpha
+  let srcW, srcH, alphaData;
+  if(alphaMask){
+    srcW = alphaMask.w; srcH = alphaMask.h;
+    alphaData = alphaMask.imageData.data; // RGBA
+  } else if(srcImage){
+    const c = document.createElement('canvas');
+    c.width = srcImage.width; c.height = srcImage.height;
+    c.getContext('2d').drawImage(srcImage, 0, 0);
+    const id = c.getContext('2d').getImageData(0,0,c.width,c.height);
+    srcW = c.width; srcH = c.height;
+    alphaData = id.data;
+  } else return null;
+
+  // 提取灰度（仅用 alpha 通道作为"灰度"，边缘即形状边缘）
+  const gray = new Float32Array(srcW * srcH);
+  for(let i=0; i<srcW*srcH; i++) gray[i] = alphaData[i*4+3] / 255;
+
+  // Sobel 3×3
+  const edge = new Float32Array(srcW * srcH);
+  let maxVal = 0;
+  for(let y=1; y<srcH-1; y++){
+    for(let x=1; x<srcW-1; x++){
+      const tl=gray[(y-1)*srcW+x-1], tm=gray[(y-1)*srcW+x], tr=gray[(y-1)*srcW+x+1];
+      const ml=gray[y*srcW+x-1],                             mr=gray[y*srcW+x+1];
+      const bl=gray[(y+1)*srcW+x-1], bm=gray[(y+1)*srcW+x], br=gray[(y+1)*srcW+x+1];
+      const gx = -tl - 2*ml - bl + tr + 2*mr + br;
+      const gy = -tl - 2*tm - tr + bl + 2*bm + br;
+      const v = Math.sqrt(gx*gx + gy*gy);
+      edge[y*srcW+x] = v;
+      if(v > maxVal) maxVal = v;
+    }
+  }
+  // 归一化
+  if(maxVal > 0) for(let i=0; i<edge.length; i++) edge[i] /= maxVal;
+
+  _edgeCache = { map: edge, w: srcW, h: srcH };
+  return _edgeCache;
+}
+
+// 清除边缘缓存（图片/抠图更新时调用）
+function clearEdgeCache(){ _edgeCache = null; }
+
+// ════════════════════════════════════════════════
+// 边缘对齐评分
+// 对 gw×gh 的每条网格线（竖线 x=1..gw-1，横线 y=1..gh-1），
+// 计算该线±半格宽度内的平均边缘强度（线上有边缘=对齐好）
+// 减去格子内部中央区域的平均边缘强度（格内应无边缘）
+// 最终分 = clamp(线上均值 - 内部均值, 0, 1)
+// ════════════════════════════════════════════════
+
+function calcEdgeAlignment(gw, gh){
+  const em = getEdgeMap();
+  if(!em) return 0;
+  const { map, w: EW, h: EH } = em;
+
+  // 网格线在边缘图坐标系中的采样
+  // 每格宽度（像素）
+  const cellW = EW / gw;
+  const cellH = EH / gh;
+  const halfW = Math.max(1, Math.round(cellW * 0.15)); // 线宽带
+  const halfH = Math.max(1, Math.round(cellH * 0.15));
+
+  let onLineSum = 0, onLineCnt = 0;
+  let offLineSum = 0, offLineCnt = 0;
+
+  // 采样竖向网格线 x = i * cellW (i=1..gw-1)
+  for(let i=1; i<gw; i++){
+    const cx = Math.round(i * cellW);
+    for(let py=0; py<EH; py++){
+      // 线上 ±halfW
+      for(let dx=-halfW; dx<=halfW; dx++){
+        const px = cx + dx;
+        if(px<0||px>=EW) continue;
+        onLineSum += map[py*EW+px]; onLineCnt++;
+      }
+      // 格中央（离线最远处）
+      const midX = Math.round((i - 0.5) * cellW);
+      const mxL = Math.max(0, midX - halfW), mxR = Math.min(EW-1, midX + halfW);
+      for(let px=mxL; px<=mxR; px++){
+        offLineSum += map[py*EW+px]; offLineCnt++;
+      }
+    }
+  }
+
+  // 采样横向网格线 y = j * cellH (j=1..gh-1)
+  for(let j=1; j<gh; j++){
+    const cy = Math.round(j * cellH);
+    for(let px=0; px<EW; px++){
+      for(let dy=-halfH; dy<=halfH; dy++){
+        const py = cy + dy;
+        if(py<0||py>=EH) continue;
+        onLineSum += map[py*EW+px]; onLineCnt++;
+      }
+      const midY = Math.round((j - 0.5) * cellH);
+      const myT = Math.max(0, midY - halfH), myB = Math.min(EH-1, midY + halfH);
+      for(let py=myT; py<=myB; py++){
+        offLineSum += map[py*EW+px]; offLineCnt++;
+      }
+    }
+  }
+
+  const onAvg  = onLineCnt  > 0 ? onLineSum  / onLineCnt  : 0;
+  const offAvg = offLineCnt > 0 ? offLineSum / offLineCnt : 0;
+  // 差值越大=网格线越贴边缘；归一化到 0~1
+  return Math.max(0, Math.min(1, (onAvg - offAvg) * 4));
+}
 
 // ════════════════════════════════════════════════
 // alpha 网格采样（公共基础）
@@ -689,9 +809,10 @@ function calcGridScore(gw, gh){
 
   const iou    = union > 0 ? intersection / union : 0;
   const purity = 1 - ambigCount / N;
-  const combo  = iou * purity;
+  const edge   = calcEdgeAlignment(gw, gh);
+  const combo  = iou * purity * (0.5 + 0.5 * edge); // edge 权重 50%
 
-  return { gw, gh, iou, purity, combo, ambigCount };
+  return { gw, gh, iou, purity, edge, combo, ambigCount };
 }
 
 // 从评分结果中取当前模式的主分
@@ -699,12 +820,13 @@ function primaryScore(r){
   const mode = document.getElementById('sel-score-mode').value;
   if(mode === 'iou')   return r.iou;
   if(mode === 'ambig') return r.purity;
+  if(mode === 'edge')  return r.edge;
   return r.combo;
 }
 
 // 格式化状态栏文字
 function formatScoreStatus(prefix, r){
-  return `${prefix} ${r.gw}×${r.gh} │ IoU ${(r.iou*100).toFixed(1)}%  纯净 ${(r.purity*100).toFixed(1)}%  综合 ${(r.combo*100).toFixed(1)}%`;
+  return `${prefix} ${r.gw}×${r.gh}\nIoU ${(r.iou*100).toFixed(1)}%  纯净 ${(r.purity*100).toFixed(1)}%  对齐 ${(r.edge*100).toFixed(1)}%  综合 ${(r.combo*100).toFixed(1)}%`;
 }
 
 // ════════════════════════════════════════════════
@@ -819,6 +941,7 @@ fileInput.onchange = (e)=>{
   srcImage.onload = ()=>{
     document.getElementById('info-orig').textContent = `${srcImage.width} × ${srcImage.height}`;
     alphaMask = null; // 新图片，清除旧 mask
+    clearEdgeCache();
     rmbgStatus.textContent = '未使用';
     rmbgStatus.style.color = '#555577';
     btnProcess.disabled = false;
