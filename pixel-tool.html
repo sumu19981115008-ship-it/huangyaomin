@@ -2023,7 +2023,7 @@ function runProcess(){
     let outlineSet = new Set(); // 描边格（keepOutline=true 时单独处理）
 
     if(chkOutlineMode.checked){
-      // 黑色描边模式：以描边为墙泛洪，精确分离前景
+      // 黑色描边模式（优先级最高）
       const lThresh = parseInt(rngOutlineThresh.value);
       const keepOutline = chkKeepOutline.checked;
       const tempCells = rawCells.map(cell => {
@@ -2038,8 +2038,66 @@ function runProcess(){
       bgSet = result.bgSet;
       // keepOutline=true 时描边格不在 bgSet 里，单独记录
       if(keepOutline) outlineSet = result.outlineSet;
+    } else if(removeBg){
+      // 泛洪填充（用户手动勾选，优先于 alphaMask）
+      const tempCells = rawCells.map(cell => {
+        let best=Infinity, bi=0;
+        colorLabList.forEach((lab, ci)=>{
+          const d = deltaE(cell.labColor, lab);
+          if(d<best){best=d;bi=ci;}
+        });
+        return { ...cell, colorHex: colorHexList[bi] };
+      });
+      const { bgSet: filledBgSet, labMap: floodLabMap, bgLab } = floodFillBg(tempCells, GW, GH, bgThreshold);
+      bgSet = filledBgSet;
+
+      // 边缘腐蚀：只腐蚀颜色接近背景色的边缘格
+      const erodeSteps = parseInt(rngErode.value);
+      const erodeThresh = bgThreshold * 1.5;
+      for(let step = 0; step < erodeSteps; step++){
+        const toAdd = [];
+        for(let gy = 0; gy < GH; gy++){
+          for(let gx = 0; gx < GW; gx++){
+            if(bgSet.has(`${gx},${gy}`)) continue;
+            const hasBgNeighbor = [[1,0],[-1,0],[0,1],[0,-1]].some(
+              ([dx,dy]) => bgSet.has(`${gx+dx},${gy+dy}`)
+            );
+            if(!hasBgNeighbor) continue;
+            const cellLab = floodLabMap.get(`${gx},${gy}`);
+            if(cellLab && deltaE(cellLab, bgLab) <= erodeThresh) toAdd.push(`${gx},${gy}`);
+          }
+        }
+        for(const k of toAdd) bgSet.add(k);
+        if(toAdd.length === 0) break;
+      }
+
+      // 泛洪结果 → alphaMask → 触发主体放大（仅首次，防循环）
+      const chkCrop = document.getElementById('chk-crop-fg');
+      if(chkCrop.checked && !_floodCropDone){
+        _floodCropDone = true;
+        const fw = srcImage.width, fh = srcImage.height;
+        const maskData = new ImageData(fw, fh);
+        for(let gy = 0; gy < GH; gy++){
+          for(let gx = 0; gx < GW; gx++){
+            const isBg = bgSet.has(`${gx},${gy}`);
+            const alpha = isBg ? 0 : 255;
+            const x0 = Math.floor(gx / GW * fw), x1 = Math.ceil((gx + 1) / GW * fw);
+            const y0 = Math.floor(gy / GH * fh), y1 = Math.ceil((gy + 1) / GH * fh);
+            for(let py = y0; py < Math.min(y1, fh); py++){
+              for(let px = x0; px < Math.min(x1, fw); px++){
+                const idx = (py * fw + px) * 4;
+                maskData.data[idx] = maskData.data[idx+1] = maskData.data[idx+2] = 255;
+                maskData.data[idx+3] = alpha;
+              }
+            }
+          }
+        }
+        alphaMask = { imageData: maskData, w: fw, h: fh };
+        clearEdgeCache(); clearSrcPixelCache(); clearSmallImgCache();
+        cropToForeground().then(() => runAutoGrid());
+      }
     } else if(alphaMask){
-      // 优先用 remove.bg alpha 通道：把原图尺寸 alpha 采样到 GW×GH 网格
+      // alphaMask：透明PNG自动建立 或 remove.bg 结果
       const { imageData: aData, w: aw, h: ah } = alphaMask;
       for(let gy=0;gy<GH;gy++){
         for(let gx=0;gx<GW;gx++){
@@ -2055,71 +2113,6 @@ function runProcess(){
           }
           if(sum/cnt < 64) bgSet.add(`${gx},${gy}`); // alpha < 25% 视为背景
         }
-      }
-    } else if(removeBg){
-      // 备用：泛洪填充（用当前色板做临时量化）
-      const tempCells = rawCells.map(cell => {
-        let best=Infinity, bi=0;
-        colorLabList.forEach((lab, ci)=>{
-          const d = deltaE(cell.labColor, lab);
-          if(d<best){best=d;bi=ci;}
-        });
-        return { ...cell, colorHex: colorHexList[bi] };
-      });
-      const { bgSet: filledBgSet, labMap: floodLabMap, bgLab } = floodFillBg(tempCells, GW, GH, bgThreshold);
-      bgSet = filledBgSet;
-
-      // 边缘腐蚀：只腐蚀颜色接近背景色的边缘格（混色白边），跳过与背景色差大的前景格
-      const erodeSteps = parseInt(rngErode.value);
-      const erodeThresh = bgThreshold * 1.5; // 稍宽松以覆盖混色渐变
-      for(let step = 0; step < erodeSteps; step++){
-        const toAdd = [];
-        for(let gy = 0; gy < GH; gy++){
-          for(let gx = 0; gx < GW; gx++){
-            if(bgSet.has(`${gx},${gy}`)) continue;
-            const hasBgNeighbor = [[1,0],[-1,0],[0,1],[0,-1]].some(
-              ([dx,dy]) => bgSet.has(`${gx+dx},${gy+dy}`)
-            );
-            if(!hasBgNeighbor) continue;
-            // 只腐蚀颜色接近背景色的格子
-            const cellLab = floodLabMap.get(`${gx},${gy}`);
-            if(cellLab && deltaE(cellLab, bgLab) <= erodeThresh){
-              toAdd.push(`${gx},${gy}`);
-            }
-          }
-        }
-        for(const k of toAdd) bgSet.add(k);
-        if(toAdd.length === 0) break;
-      }
-
-      // 泛洪填充结果 → alphaMask → 触发主体放大（仅首次，防循环）
-      const chkCrop = document.getElementById('chk-crop-fg');
-      if(chkCrop.checked && !_floodCropDone){
-        _floodCropDone = true;
-        // 把 bgSet（网格坐标）转换成原图尺寸的 alpha 图
-        const fw = srcImage.width, fh = srcImage.height;
-        const maskData = new ImageData(fw, fh);
-        for(let gy = 0; gy < GH; gy++){
-          for(let gx = 0; gx < GW; gx++){
-            const isBg = bgSet.has(`${gx},${gy}`);
-            const alpha = isBg ? 0 : 255;
-            const x0 = Math.floor(gx / GW * fw), x1 = Math.ceil((gx + 1) / GW * fw);
-            const y0 = Math.floor(gy / GH * fh), y1 = Math.ceil((gy + 1) / GH * fh);
-            for(let py = y0; py < Math.min(y1, fh); py++){
-              for(let px = x0; px < Math.min(x1, fw); px++){
-                const idx = (py * fw + px) * 4;
-                maskData.data[idx]   = 255;
-                maskData.data[idx+1] = 255;
-                maskData.data[idx+2] = 255;
-                maskData.data[idx+3] = alpha;
-              }
-            }
-          }
-        }
-        alphaMask = { imageData: maskData, w: fw, h: fh };
-        clearEdgeCache(); clearSrcPixelCache(); clearSmallImgCache();
-        // 异步：放大主体后重新寻优（不阻塞当前 runProcess 的后续绘制）
-        cropToForeground().then(() => runAutoGrid());
       }
     }
 
