@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-22
+> 每次新开发前阅读本文档。最后更新：2026-04-22（editor.js 重构）
 
 ---
 
@@ -323,6 +323,38 @@ _handleClick → items.handleClick → 暂存区点击 → 队列点击
 - 保存接口：`POST /api/save-level`，`GET /api/level-list`（由 vite.config.js 中间件实现）
 - 保存前强制校验：同色对齐、整十、坐标有效
 - 保留所有遗留字段（填默认值）
+
+### 关键状态
+
+```js
+state = {
+  brushColor,      // 当前画笔颜色（null = 橡皮擦）
+  brushTool,       // 'pixel' | 'obstacle'（扩展点，未来障碍工具分发）
+  data,            // 当前关卡 JSON 对象
+  canvas, ctx,     // 编辑画布
+  ...
+}
+```
+
+### 障碍元素接口预留（待实现）
+
+| 扩展点 | 位置 | 说明 |
+|--------|------|------|
+| `state.brushTool` | state 初始化 | 切换为 `'obstacle'` 后 paintCell 分发到 paintObstacleCell() |
+| `renderObstacles()` | renderCanvas 末尾 | 遍历 entities 中障碍类型并绘制 |
+| `paintObstacleCell(x, y)` | paintCell 分发 | 写入障碍 entity 的 cells |
+| applyGridSize 注释 | applyGridSize 末尾 | 缩网格时同步裁剪障碍 cells |
+
+### normalize() 弹药分配算法
+
+将 target 颗弹药分给 n 辆炮车，每辆必须是 10 的倍数：
+
+```js
+let base = Math.max(10, Math.floor(target / n / 10) * 10);
+while (n > 1 && base * (n - 1) > target - 10) base -= 10;
+if (base < 10) base = 10;
+const last = Math.max(10, target - base * (n - 1));
+```
 
 ---
 
