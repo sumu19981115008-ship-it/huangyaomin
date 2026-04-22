@@ -631,13 +631,16 @@ function floodFillBg(cells, GW, GH, threshold){
 
   const bgSet = new Set();
 
-  // 四个角的种子
+  // 四个角的种子，收集背景色 Lab 均值（用于后续腐蚀判断）
   const corners = [[0,0],[GW-1,0],[0,GH-1],[GW-1,GH-1]];
+  const bgLabSamples = [];
+
   for(const [sx, sy] of corners){
     const key = `${sx},${sy}`;
     if(bgSet.has(key)) continue;
     const seedLab = labMap.get(key);
     if(!seedLab) continue;
+    bgLabSamples.push(seedLab);
 
     const queue = [[sx, sy]];
     bgSet.add(key);
@@ -659,7 +662,13 @@ function floodFillBg(cells, GW, GH, threshold){
     }
   }
 
-  return bgSet;
+  // 背景色均值 Lab
+  const bgLab = bgLabSamples.length > 0
+    ? bgLabSamples.reduce((a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]])
+        .map(v => v / bgLabSamples.length)
+    : [100, 0, 0]; // 无种子时退化为白色
+
+  return { bgSet, labMap, bgLab };
 }
 
 // ════════════════════════════════════════════════
@@ -1866,10 +1875,12 @@ function runProcess(){
         });
         return { ...cell, colorHex: colorHexList[bi] };
       });
-      bgSet = floodFillBg(tempCells, GW, GH, bgThreshold);
+      const { bgSet: filledBgSet, labMap: floodLabMap, bgLab } = floodFillBg(tempCells, GW, GH, bgThreshold);
+      bgSet = filledBgSet;
 
-      // 边缘腐蚀：把与背景相邻的前景格也标记为背景，消除混色白边
+      // 边缘腐蚀：只腐蚀颜色接近背景色的边缘格（混色白边），跳过与背景色差大的前景格
       const erodeSteps = parseInt(rngErode.value);
+      const erodeThresh = bgThreshold * 1.5; // 稍宽松以覆盖混色渐变
       for(let step = 0; step < erodeSteps; step++){
         const toAdd = [];
         for(let gy = 0; gy < GH; gy++){
@@ -1878,7 +1889,12 @@ function runProcess(){
             const hasBgNeighbor = [[1,0],[-1,0],[0,1],[0,-1]].some(
               ([dx,dy]) => bgSet.has(`${gx+dx},${gy+dy}`)
             );
-            if(hasBgNeighbor) toAdd.push(`${gx},${gy}`);
+            if(!hasBgNeighbor) continue;
+            // 只腐蚀颜色接近背景色的格子
+            const cellLab = floodLabMap.get(`${gx},${gy}`);
+            if(cellLab && deltaE(cellLab, bgLab) <= erodeThresh){
+              toAdd.push(`${gx},${gy}`);
+            }
           }
         }
         for(const k of toAdd) bgSet.add(k);
