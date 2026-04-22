@@ -1788,10 +1788,32 @@ fileInput.onchange = (e)=>{
     clearSmallImgCache();
     rmbgStatus.textContent = '未使用';
     rmbgStatus.style.color = '#555577';
+
+    // 透明 PNG：自动从 alpha 通道建立 alphaMask，后续所有逻辑（裁剪/评分/去背景）均正确工作
+    const ac = document.createElement('canvas');
+    ac.width = srcImage.width; ac.height = srcImage.height;
+    const actx = ac.getContext('2d');
+    actx.drawImage(srcImage, 0, 0);
+    const id = actx.getImageData(0, 0, ac.width, ac.height);
+    let hasTransparency = false;
+    for(let i = 3; i < id.data.length; i += 4){
+      if(id.data[i] < 128){ hasTransparency = true; break; }
+    }
+    if(hasTransparency){
+      alphaMask = { imageData: id, w: ac.width, h: ac.height };
+      rmbgStatus.textContent = '✓ 透明 PNG，已自动识别轮廓';
+      rmbgStatus.style.color = '#44ccaa';
+    }
+
     btnProcess.disabled = false;
     updateRmbgBtn();
     updateAutoGridBtn();
-    runProcess();
+    // 有透明通道时先放大主体再寻优，否则直接处理
+    if(hasTransparency){
+      cropToForeground().then(() => runAutoGrid());
+    } else {
+      runProcess();
+    }
   };
   srcImage.src = url;
 };
