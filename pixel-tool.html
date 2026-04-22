@@ -2020,6 +2020,8 @@ function runProcess(){
       }
     }
 
+    let outlineSet = new Set(); // 描边格（keepOutline=true 时单独处理）
+
     if(chkOutlineMode.checked){
       // 黑色描边模式：以描边为墙泛洪，精确分离前景
       const lThresh = parseInt(rngOutlineThresh.value);
@@ -2032,8 +2034,10 @@ function runProcess(){
         });
         return { ...cell, colorHex: colorHexList[bi] };
       });
-      const { bgSet: outlineBgSet } = outlineModeBg(tempCells, GW, GH, lThresh, keepOutline);
-      bgSet = outlineBgSet;
+      const result = outlineModeBg(tempCells, GW, GH, lThresh, keepOutline);
+      bgSet = result.bgSet;
+      // keepOutline=true 时描边格不在 bgSet 里，单独记录
+      if(keepOutline) outlineSet = result.outlineSet;
     } else if(alphaMask){
       // 优先用 remove.bg alpha 通道：把原图尺寸 alpha 采样到 GW×GH 网格
       const { imageData: aData, w: aw, h: ah } = alphaMask;
@@ -2119,8 +2123,10 @@ function runProcess(){
       }
     }
 
-    // 7. 过滤掉背景格子
-    const activeCells = rawCells.filter(c => !bgSet.has(`${c.x},${c.y}`));
+    // 7. 过滤掉背景格子和描边格（描边格单独处理）
+    const activeCells = rawCells.filter(c =>
+      !bgSet.has(`${c.x},${c.y}`) && !outlineSet.has(`${c.x},${c.y}`)
+    );
 
     setProgress(75);
 
@@ -2139,6 +2145,15 @@ function runProcess(){
       });
     } else {
       finalCells = assignWithQuota(activeCells, colorHexList, colorLabList, excludedColors);
+    }
+
+    // 描边格强制赋黑色，合并进结果
+    if(outlineSet.size > 0){
+      const BLACK = '#222222';
+      for(const key of outlineSet){
+        const [x, y] = key.split(',').map(Number);
+        finalCells.push({ x, y, colorHex: BLACK, labColor: rgbToLab(34, 34, 34) });
+      }
     }
 
     setProgress(90);
