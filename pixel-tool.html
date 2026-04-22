@@ -109,10 +109,21 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
 
   <div class="section">
     <h3>颜色控制 <span style="color:#5555cc;font-size:10px">（寻优时自动调整）</span></h3>
-    <label>最大颜色数 <span class="val-display" id="val-colors">6</span></label>
-    <input type="range" id="rng-colors" min="2" max="16" value="6">
-    <label style="margin-top:8px">相似色合并阈值 <span class="val-display" id="val-thresh">25</span></label>
-    <input type="range" id="rng-thresh" min="0" max="100" value="25">
+
+    <div style="margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="chk-fixed-palette" style="width:auto;accent-color:#cc5500">
+        <span style="color:#ffaa66;font-weight:bold">固定色板模式（34色）</span>
+      </label>
+      <div id="fixed-palette-preview" style="display:none;margin-top:6px;flex-wrap:wrap;gap:2px"></div>
+    </div>
+
+    <div id="dynamic-color-controls">
+      <label>最大颜色数 <span class="val-display" id="val-colors">6</span></label>
+      <input type="range" id="rng-colors" min="2" max="16" value="6">
+      <label style="margin-top:8px">相似色合并阈值 <span class="val-display" id="val-thresh">25</span></label>
+      <input type="range" id="rng-thresh" min="0" max="100" value="25">
+    </div>
     <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
   </div>
 
@@ -640,6 +651,21 @@ function floodFillBg(cells, GW, GH, threshold){
 }
 
 // ════════════════════════════════════════════════
+// 固定色板（34色）
+// ════════════════════════════════════════════════
+
+const FIXED_PALETTE_HEX = [
+  "#4169E1","#00008B","#222222","#228B22","#FF8C00",
+  "#FF69B4","#8B008B","#CC0000","#00CED1","#FFD700",
+  "#F5F5F5","#8B4513","#006400","#50C878","#C8A2C8",
+  "#8FBC8F","#FA8072","#E6E6FA","#CC4E36","#F5DEB3",
+  "#CB4154","#808080","#404040","#4B0082","#FF007F",
+  "#FFB6C1","#FFAA5C","#800020","#6B8E23","#5F9EA0",
+  "#C4A265","#8B6914","#9D00FF","#6E7F80",
+];
+const FIXED_PALETTE_LAB = FIXED_PALETTE_HEX.map(h => rgbToLab(...hexToRgb(h)));
+
+// ════════════════════════════════════════════════
 // 状态
 // ════════════════════════════════════════════════
 
@@ -682,6 +708,28 @@ rngGW.oninput       = ()=>{ valGW.textContent=rngGW.value; if(srcImage) schedule
 rngGH.oninput       = ()=>{ valGH.textContent=rngGH.value; if(srcImage) scheduleProcess(); };
 rngColors.oninput   = ()=>{ valColors.textContent=rngColors.value; if(srcImage) scheduleProcess(); };
 rngThresh.oninput   = ()=>{ valThresh.textContent=rngThresh.value; if(srcImage) scheduleProcess(); };
+
+// 固定色板开关
+const chkFixedPalette = document.getElementById('chk-fixed-palette');
+const fixedPalettePreview = document.getElementById('fixed-palette-preview');
+const dynamicColorControls = document.getElementById('dynamic-color-controls');
+
+// 初始化固定色板预览色块
+(()=>{
+  for(const hex of FIXED_PALETTE_HEX){
+    const sw = document.createElement('div');
+    sw.style.cssText = `width:14px;height:14px;border-radius:2px;background:${hex};title='${hex}'`;
+    sw.title = hex;
+    fixedPalettePreview.appendChild(sw);
+  }
+})();
+
+chkFixedPalette.onchange = ()=>{
+  const on = chkFixedPalette.checked;
+  dynamicColorControls.style.display  = on ? 'none' : '';
+  fixedPalettePreview.style.display   = on ? 'flex' : 'none';
+  if(srcImage) scheduleProcess();
+};
 const rngBgThresh   = document.getElementById('rng-bg-thresh');
 const valBgThresh   = document.getElementById('val-bg-thresh');
 const chkRemoveBg   = document.getElementById('chk-remove-bg');
@@ -1712,17 +1760,27 @@ function runProcess(){
 
   setProgress(25);
 
-  // 3. K-Means 量化（在 setTimeout 中执行避免阻塞 UI）
+  // 3~4. 量化 + 颜色列表（固定色板 vs 动态 Median Cut）
   setTimeout(()=>{
-    const k = Math.min(maxColors, GW*GH);
-    const { palette, assignment } = kMeansQuantize(pixels, k);
+    const useFixed = chkFixedPalette.checked;
 
-    setProgress(55);
+    let colorHexList, colorLabList;
 
-    // 4. 相似色合并
-    const { mergeMap, uniqueRoots, rootColors } = mergeSimilarColors(palette, assignment, threshold);
-
-    setProgress(65);
+    if(useFixed){
+      // 固定色板：直接用预定义 34 色，跳过 Median Cut
+      colorHexList = [...FIXED_PALETTE_HEX];
+      colorLabList = [...FIXED_PALETTE_LAB];
+      setProgress(65);
+    } else {
+      // 动态：Median Cut 量化 → 相似色合并
+      const k = Math.min(maxColors, GW*GH);
+      const { palette, assignment } = kMeansQuantize(pixels, k);
+      setProgress(55);
+      const { uniqueRoots, rootColors } = mergeSimilarColors(palette, assignment, threshold);
+      setProgress(65);
+      colorHexList = uniqueRoots.map(r => rgbHex(...rootColors[r]));
+      colorLabList = uniqueRoots.map(r => rgbToLab(...rootColors[r]));
+    }
 
     // 5. 构建 rawCells（带原始像素 Lab，供配额分配用）
     const rawCells = [];
@@ -1756,14 +1814,14 @@ function runProcess(){
         }
       }
     } else if(removeBg){
-      // 备用：泛洪填充
+      // 备用：泛洪填充（用当前色板做临时量化）
       const tempCells = rawCells.map(cell => {
         let best=Infinity, bi=0;
-        uniqueRoots.forEach((r,ri)=>{
-          const d = deltaE(cell.labColor, rgbToLab(...rootColors[r]));
-          if(d<best){best=d;bi=ri;}
+        colorLabList.forEach((lab, ci)=>{
+          const d = deltaE(cell.labColor, lab);
+          if(d<best){best=d;bi=ci;}
         });
-        return { ...cell, colorHex: rgbHex(...rootColors[uniqueRoots[bi]]) };
+        return { ...cell, colorHex: colorHexList[bi] };
       });
       bgSet = floodFillBg(tempCells, GW, GH, bgThreshold);
 
@@ -1800,10 +1858,6 @@ function runProcess(){
 
     // 7. 过滤掉背景格子
     const activeCells = rawCells.filter(c => !bgSet.has(`${c.x},${c.y}`));
-
-    // 8. 收集合并后的颜色列表和 Lab 中心
-    const colorHexList = uniqueRoots.map(r => rgbHex(...rootColors[r]));
-    const colorLabList = uniqueRoots.map(r => rgbToLab(...rootColors[r]));
 
     setProgress(75);
 
