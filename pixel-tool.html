@@ -1924,6 +1924,13 @@ function runProcess(){
     // 6. 确定背景格子
     let bgSet = new Set();
 
+    // 透明 PNG：alpha < 128 的格子自动视为背景
+    for(let gy = 0; gy < GH; gy++){
+      for(let gx = 0; gx < GW; gx++){
+        if(pixels[(gy * GW + gx) * 4 + 3] < 128) bgSet.add(`${gx},${gy}`);
+      }
+    }
+
     if(chkOutlineMode.checked){
       // 黑色描边模式：以描边为墙泛洪，精确分离前景
       const lThresh = parseInt(rngOutlineThresh.value);
@@ -2069,7 +2076,7 @@ function runProcess(){
       ctxPx.fillRect(c.x*PREVIEW_CELL, c.y*PREVIEW_CELL, PREVIEW_CELL-1, PREVIEW_CELL-1);
     }
     // 背景格子用半透明标记（方便看轮廓）
-    if(removeBg && bgSet.size > 0){
+    if(bgSet.size > 0){
       ctxPx.fillStyle = 'rgba(255,0,100,0.12)';
       for(const key of bgSet){
         const [bx,by] = key.split(',').map(Number);
