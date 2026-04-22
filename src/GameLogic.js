@@ -63,9 +63,10 @@ class ActiveTurret {
 
 export class GameLogic {
   constructor() {
-    this.grid    = [];
-    this.blocks  = [];
-    this.lanes   = [];
+    this.grid      = [];
+    this.blocks    = [];
+    this.obstacles = [];
+    this.lanes     = [];
     this.turrets = [];
     this.buffer  = [];
     this.pendingBullets   = [];
@@ -103,11 +104,12 @@ export class GameLogic {
     });
     // ──────────────────────────────────────────────────────────
 
-    this.grid   = Array.from({ length: bh }, () => Array(bw).fill(null));
-    this.blocks = [];
-    this.lanes  = [];
-    this.turrets= [];
-    this.buffer = [];
+    this.grid      = Array.from({ length: bh }, () => Array(bw).fill(null));
+    this.blocks    = [];
+    this.obstacles = [];   // 预留：障碍物列表，{ x, y, type, ...data }
+    this.lanes     = [];
+    this.turrets   = [];
+    this.buffer    = [];
     this.pendingBullets  = [];
     this.inFlightTargets = new Set();
     this.trackCap        = TRACK_CAP;
@@ -118,14 +120,27 @@ export class GameLogic {
     this.failReason      = null;
 
     for (const entity of data.entities) {
-      if (entity.type !== 'PixelBlock') continue;
-      const color = entity.color.toUpperCase();
-      for (const cell of entity.cells) {
-        const col = cell.x;
-        const row = (bh - 1) - cell.y;
-        if (col < 0 || col >= bw || row < 0 || row >= bh) continue;
-        this.grid[row][col] = color;
-        this.blocks.push({ x: col, y: row, color });
+      const color = entity.color?.toUpperCase();
+      const cells = entity.cells ?? [];
+      switch (entity.type) {
+        case 'PixelBlock':
+          for (const cell of cells) {
+            const col = cell.x;
+            const row = (bh - 1) - cell.y;
+            if (col < 0 || col >= bw || row < 0 || row >= bh) continue;
+            this.grid[row][col] = color;
+            this.blocks.push({ x: col, y: row, color });
+          }
+          break;
+        default:
+          // 未知 entity 类型暂存到 obstacles，后续障碍开发时在此 switch 增加 case
+          for (const cell of cells) {
+            const col = cell.x;
+            const row = (bh - 1) - cell.y;
+            if (col < 0 || col >= bw || row < 0 || row >= bh) continue;
+            this.obstacles.push({ x: col, y: row, type: entity.type, color, raw: entity });
+          }
+          break;
       }
     }
 
