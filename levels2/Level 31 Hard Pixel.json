@@ -1,0 +1,375 @@
+{
+  "Difficulty": "Easy",
+  "HasTimeLimit": false,
+  "TimeLimit": 0,
+  "SlotCount": 5,
+  "ConveyorLimit": 5,
+  "QueueGroup": [
+    [
+      {
+        "id": 8,
+        "ammo": 10,
+        "material": 5
+      },
+      {
+        "id": 17,
+        "ammo": 10,
+        "material": 7
+      },
+      {
+        "id": 24,
+        "ammo": 10,
+        "material": 8
+      },
+      {
+        "id": 1,
+        "ammo": 20,
+        "material": 5
+      },
+      {
+        "id": 22,
+        "ammo": 20,
+        "material": 7
+      },
+      {
+        "id": 2,
+        "ammo": 10,
+        "material": 6
+      },
+      {
+        "id": 4,
+        "ammo": 20,
+        "material": 5
+      },
+      {
+        "id": 13,
+        "ammo": 10,
+        "material": 6
+      },
+      {
+        "id": 7,
+        "ammo": 20,
+        "material": 5
+      },
+      {
+        "id": 3,
+        "ammo": 10,
+        "material": 7
+      }
+    ],
+    [
+      {
+        "id": 23,
+        "ammo": 10,
+        "material": 7
+      },
+      {
+        "id": 5,
+        "ammo": 10,
+        "material": 5
+      },
+      {
+        "id": 12,
+        "ammo": 10,
+        "material": 6
+      },
+      {
+        "id": 15,
+        "ammo": 20,
+        "material": 7
+      },
+      {
+        "id": 14,
+        "ammo": 10,
+        "material": 6
+      },
+      {
+        "id": 20,
+        "ammo": 10,
+        "material": 7
+      },
+      {
+        "id": 25,
+        "ammo": 10,
+        "material": 8
+      },
+      {
+        "id": 9,
+        "ammo": 20,
+        "material": 5
+      },
+      {
+        "id": 10,
+        "ammo": 10,
+        "material": 7
+      },
+      {
+        "id": 6,
+        "ammo": 10,
+        "material": 5
+      }
+    ]
+  ],
+  "PixelImageData": {
+    "width": 20,
+    "height": 25,
+    "physicalWidth": 6,
+    "physicalHeight": 6,
+    "pixels": [
+      {
+        "x": 3,
+        "y": 14,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 3,
+        "y": 15,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 2
+      },
+      {
+        "x": 4,
+        "y": 13,
+        "material": 6,
+        "areaX": 4,
+        "areaY": 2
+      },
+      {
+        "x": 4,
+        "y": 15,
+        "material": 5,
+        "areaX": 3,
+        "areaY": 3
+      },
+      {
+        "x": 5,
+        "y": 12,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 5,
+        "y": 18,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 6,
+        "y": 11,
+        "material": 8,
+        "areaX": 2,
+        "areaY": 2
+      },
+      {
+        "x": 7,
+        "y": 10,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 7,
+        "y": 15,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 2
+      },
+      {
+        "x": 8,
+        "y": 9,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 8,
+        "y": 10,
+        "material": 7,
+        "areaX": 4,
+        "areaY": 4
+      },
+      {
+        "x": 8,
+        "y": 14,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 2
+      },
+      {
+        "x": 9,
+        "y": 8,
+        "material": 5,
+        "areaX": 2,
+        "areaY": 2
+      },
+      {
+        "x": 9,
+        "y": 14,
+        "material": 5,
+        "areaX": 2,
+        "areaY": 1
+      },
+      {
+        "x": 11,
+        "y": 9,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 11,
+        "y": 14,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 2
+      },
+      {
+        "x": 12,
+        "y": 10,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 12,
+        "y": 11,
+        "material": 8,
+        "areaX": 2,
+        "areaY": 2
+      },
+      {
+        "x": 12,
+        "y": 13,
+        "material": 6,
+        "areaX": 4,
+        "areaY": 2
+      },
+      {
+        "x": 12,
+        "y": 15,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 2
+      },
+      {
+        "x": 13,
+        "y": 15,
+        "material": 5,
+        "areaX": 3,
+        "areaY": 3
+      },
+      {
+        "x": 14,
+        "y": 12,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 14,
+        "y": 18,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 16,
+        "y": 14,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 1
+      },
+      {
+        "x": 16,
+        "y": 15,
+        "material": 7,
+        "areaX": 1,
+        "areaY": 2
+      }
+    ],
+    "pixelHealths": [
+      {
+        "x": 3,
+        "y": 15,
+        "health": 5
+      },
+      {
+        "x": 4,
+        "y": 13,
+        "health": 20
+      },
+      {
+        "x": 4,
+        "y": 15,
+        "health": 40
+      },
+      {
+        "x": 6,
+        "y": 11,
+        "health": 10
+      },
+      {
+        "x": 7,
+        "y": 15,
+        "health": 5
+      },
+      {
+        "x": 8,
+        "y": 10,
+        "health": 50
+      },
+      {
+        "x": 8,
+        "y": 14,
+        "health": 5
+      },
+      {
+        "x": 9,
+        "y": 8,
+        "health": 20
+      },
+      {
+        "x": 9,
+        "y": 14,
+        "health": 10
+      },
+      {
+        "x": 11,
+        "y": 14,
+        "health": 5
+      },
+      {
+        "x": 12,
+        "y": 11,
+        "health": 10
+      },
+      {
+        "x": 12,
+        "y": 13,
+        "health": 20
+      },
+      {
+        "x": 12,
+        "y": 15,
+        "health": 5
+      },
+      {
+        "x": 13,
+        "y": 15,
+        "health": 40
+      },
+      {
+        "x": 16,
+        "y": 15,
+        "health": 5
+      }
+    ],
+    "contentHash": 0
+  },
+  "_name": "Level 31 Hard Pixel"
+}
