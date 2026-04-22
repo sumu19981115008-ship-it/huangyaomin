@@ -165,6 +165,10 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
 
   <div class="section">
     <h3>当前调色板</h3>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px">
+      <input type="checkbox" id="chk-free-mode" style="width:auto;accent-color:#cc3388">
+      <span style="color:#ff88cc">自由模式（不限颜色数 / 不限10倍数）</span>
+    </label>
     <div id="color-palette" class="color-palette"></div>
     <div class="stat-row"><span>颜色数</span><span id="stat-colors">—</span></div>
     <div class="stat-row"><span>总格子数</span><span id="stat-cells">—</span></div>
@@ -750,6 +754,9 @@ chkRemoveBg.onchange = ()=>{ _floodCropDone = false; updateAutoGridBtn(); if(src
 const rngCropPad = document.getElementById('rng-crop-pad');
 const valCropPad = document.getElementById('val-crop-pad');
 rngCropPad.oninput = ()=>{ valCropPad.textContent = rngCropPad.value; };
+
+const chkFreeMode = document.getElementById('chk-free-mode');
+chkFreeMode.onchange = ()=>{ if(srcImage) scheduleProcess(); };
 
 // ════════════════════════════════════════════════
 // 去背景后放大主体到画布边缘
@@ -1892,8 +1899,22 @@ function runProcess(){
 
     setProgress(75);
 
-    // 9. 配额约束分配：严格保证每色格子数为10的倍数，不丢弃任何格子
-    const finalCells = assignWithQuota(activeCells, colorHexList, colorLabList, excludedColors);
+    // 9. 分配：自由模式=纯最近邻，否则配额约束（严格10倍数）
+    let finalCells;
+    if(chkFreeMode.checked){
+      const validHexes = colorHexList.filter(h => !excludedColors.has(h));
+      const validLabs  = validHexes.map((_,i) => colorLabList[colorHexList.indexOf(validHexes[i])]);
+      finalCells = activeCells.map(cell => {
+        let best = Infinity, bi = 0;
+        for(let ci = 0; ci < validLabs.length; ci++){
+          const d = deltaE(cell.labColor, validLabs[ci]);
+          if(d < best){ best = d; bi = ci; }
+        }
+        return { ...cell, colorHex: validHexes[bi] };
+      });
+    } else {
+      finalCells = assignWithQuota(activeCells, colorHexList, colorLabList, excludedColors);
+    }
 
     setProgress(90);
 
@@ -1970,7 +1991,7 @@ function updatePaletteUI(paletteMap){
 
   document.getElementById('stat-colors').textContent = sorted.length;
   document.getElementById('stat-cells').textContent  = Object.values(paletteMap).reduce((a,b)=>a+b,0);
-  warn.style.display = hasNonTen ? 'flex' : 'none';
+  warn.style.display = (!chkFreeMode.checked && hasNonTen) ? 'flex' : 'none';
 }
 
 // ════════════════════════════════════════════════
