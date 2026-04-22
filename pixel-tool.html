@@ -81,6 +81,7 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
       点击或拖拽图片到此处
     </label>
     <input type="file" id="file-input" accept="image/*">
+    <button class="btn" id="btn-reset" style="margin-top:6px;color:#ff8888;border-color:#663333">重置所有条件</button>
   </div>
 
   <div class="section">
@@ -1816,6 +1817,72 @@ fileInput.onchange = (e)=>{
     }
   };
   srcImage.src = url;
+};
+
+// 重置所有条件
+document.getElementById('btn-reset').onclick = ()=>{
+  // 图片与遮罩
+  srcImage = null; alphaMask = null;
+  detectedPixelSize = 0; compareTopResults = [];
+  _floodCropDone = false; excludedColors.clear();
+  currentCells = []; currentPalette = {};
+  generatedLevel = null;
+
+  // 滑块恢复默认值
+  rngGW.value = 20; valGW.textContent = 20;
+  rngGH.value = 20; valGH.textContent = 20;
+  rngColors.value = 6; valColors.textContent = 6;
+  rngThresh.value = 25; valThresh.textContent = 25;
+  rngBgThresh.value = 20; valBgThresh.textContent = 20;
+  rngErode.value = 1; valErode.textContent = 1;
+  rngCropPad.value = 5; valCropPad.textContent = 5;
+  rngFixedColors.value = 6; valFixedColors.textContent = 6;
+  document.getElementById('rng-outline-thresh').value = 30;
+  document.getElementById('val-outline-thresh').textContent = 30;
+
+  // 勾选框恢复默认
+  chkRemoveBg.checked = false;
+  chkFixedPalette.checked = false;
+  chkFreeMode.checked = false;
+  chkOutlineMode.checked = false;
+  document.getElementById('chk-keep-outline').checked = true;
+  document.getElementById('chk-crop-fg').checked = true;
+
+  // 联动 UI 状态
+  dynamicColorControls.style.display = '';
+  fixedColorControls.style.display = 'none';
+  fixedPalettePreview.style.display = 'none';
+  outlineControls.style.display = 'none';
+
+  // 清空画布与状态栏
+  const ctxO = canvasOrig.getContext('2d');
+  ctxO.clearRect(0, 0, canvasOrig.width, canvasOrig.height);
+  const ctxP = canvasPixel.getContext('2d');
+  ctxP.clearRect(0, 0, canvasPixel.width, canvasPixel.height);
+  document.getElementById('info-orig').textContent = '—';
+  document.getElementById('info-pixel').textContent = '—';
+  document.getElementById('color-palette').innerHTML = '';
+  document.getElementById('stat-colors').textContent = '—';
+  document.getElementById('stat-cells').textContent = '—';
+  document.getElementById('stat-warn').style.display = 'none';
+  document.getElementById('crop-status').textContent = '';
+  autoGridStatus.textContent = '需要先上传图片';
+  autoGridStatus.style.color = '#555577';
+  progressGrid.style.width = '0%';
+  progress.style.width = '0%';
+  rmbgStatus.textContent = '未使用';
+  rmbgStatus.style.color = '#555577';
+  jsonPreview.textContent = '（尚未生成）';
+  saveMsg.textContent = '';
+  uploadLabel.textContent = '点击或拖拽图片到此处';
+  fileInput.value = '';
+
+  clearEdgeCache(); clearSrcPixelCache(); clearSmallImgCache();
+  btnProcess.disabled = true;
+  btnGenerate.disabled = true;
+  btnSave.disabled = true;
+  updateAutoGridBtn();
+  updateRmbgBtn();
 };
 
 // 拖拽上传
