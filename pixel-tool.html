@@ -145,8 +145,23 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
 
     <div style="border-top:1px solid #1c1c38;padding-top:8px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px">
+        <input type="checkbox" id="chk-outline-mode" style="width:auto;accent-color:#aaaaff">
+        <span style="color:#ccccff;font-weight:bold">黑色描边模式</span>
+      </label>
+      <div id="outline-controls" style="display:none">
+        <label style="color:#888899">描边亮度阈值（L &lt; N = 黑） <span class="val-display" id="val-outline-thresh">30</span></label>
+        <input type="range" id="rng-outline-thresh" min="5" max="60" value="30">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:6px">
+          <input type="checkbox" id="chk-keep-outline" checked style="width:auto;accent-color:#aaaaff">
+          <span style="color:#888899">保留描边作为颜色</span>
+        </label>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid #1c1c38;padding-top:8px;margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px">
         <input type="checkbox" id="chk-remove-bg" style="width:auto;accent-color:#5555cc">
-        <span style="color:#777799">备用：泛洪填充去背景</span>
+        <span style="color:#777799">泛洪填充去背景</span>
       </label>
       <label style="color:#888899">背景色差阈值 <span class="val-display" id="val-bg-thresh">20</span></label>
       <input type="range" id="rng-bg-thresh" min="0" max="80" value="20">
@@ -672,6 +687,55 @@ function floodFillBg(cells, GW, GH, threshold){
 }
 
 // ════════════════════════════════════════════════
+// 黑色描边模式去背景
+//
+// 把格子 Lab 亮度 L < lThresh 的视为描边墙（不可穿越）。
+// 从四角泛洪，遇描边墙停止 → 泛洪到的区域 = 背景。
+// 描边格自身根据 keepOutline 决定是否保留。
+// 返回 { bgSet: Set<"x,y">, outlineSet: Set<"x,y"> }
+// ════════════════════════════════════════════════
+
+function outlineModeBg(cells, GW, GH, lThresh, keepOutline){
+  const labMap = new Map();
+  for(const c of cells) labMap.set(`${c.x},${c.y}`, c.labColor);
+
+  // 标记描边格（L < lThresh）
+  const outlineSet = new Set();
+  for(const c of cells){
+    const lab = labMap.get(`${c.x},${c.y}`);
+    if(lab && lab[0] < lThresh) outlineSet.add(`${c.x},${c.y}`);
+  }
+
+  // 从四角泛洪，描边墙不可穿越
+  const bgSet = new Set();
+  const corners = [[0,0],[GW-1,0],[0,GH-1],[GW-1,GH-1]];
+  for(const [sx, sy] of corners){
+    const key = `${sx},${sy}`;
+    if(bgSet.has(key) || outlineSet.has(key)) continue;
+    const queue = [[sx, sy]];
+    bgSet.add(key);
+    while(queue.length){
+      const [x, y] = queue.pop();
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = x+dx, ny = y+dy;
+        if(nx<0||nx>=GW||ny<0||ny>=GH) continue;
+        const nk = `${nx},${ny}`;
+        if(bgSet.has(nk) || outlineSet.has(nk)) continue;
+        bgSet.add(nk);
+        queue.push([nx, ny]);
+      }
+    }
+  }
+
+  // 描边格：keepOutline=false 时也视为背景（去掉黑边）
+  if(!keepOutline){
+    for(const k of outlineSet) bgSet.add(k);
+  }
+
+  return { bgSet, outlineSet };
+}
+
+// ════════════════════════════════════════════════
 // 固定色板（34色）
 // ════════════════════════════════════════════════
 
@@ -765,6 +829,19 @@ chkRemoveBg.onchange = ()=>{ _floodCropDone = false; updateAutoGridBtn(); if(src
 const rngErode = document.getElementById('rng-erode');
 const valErode = document.getElementById('val-erode');
 rngErode.oninput = ()=>{ valErode.textContent = rngErode.value; if(srcImage) scheduleProcess(); };
+
+// 黑色描边模式控件
+const chkOutlineMode    = document.getElementById('chk-outline-mode');
+const outlineControls   = document.getElementById('outline-controls');
+const rngOutlineThresh  = document.getElementById('rng-outline-thresh');
+const valOutlineThresh  = document.getElementById('val-outline-thresh');
+const chkKeepOutline    = document.getElementById('chk-keep-outline');
+rngOutlineThresh.oninput = ()=>{ valOutlineThresh.textContent = rngOutlineThresh.value; if(srcImage) scheduleProcess(); };
+chkKeepOutline.onchange  = ()=>{ if(srcImage) scheduleProcess(); };
+chkOutlineMode.onchange  = ()=>{
+  outlineControls.style.display = chkOutlineMode.checked ? '' : 'none';
+  if(srcImage) scheduleProcess();
+};
 const rngCropPad = document.getElementById('rng-crop-pad');
 const valCropPad = document.getElementById('val-crop-pad');
 rngCropPad.oninput = ()=>{ valCropPad.textContent = rngCropPad.value; };
@@ -1847,7 +1924,21 @@ function runProcess(){
     // 6. 确定背景格子
     let bgSet = new Set();
 
-    if(alphaMask){
+    if(chkOutlineMode.checked){
+      // 黑色描边模式：以描边为墙泛洪，精确分离前景
+      const lThresh = parseInt(rngOutlineThresh.value);
+      const keepOutline = chkKeepOutline.checked;
+      const tempCells = rawCells.map(cell => {
+        let best=Infinity, bi=0;
+        colorLabList.forEach((lab, ci)=>{
+          const d = deltaE(cell.labColor, lab);
+          if(d<best){best=d;bi=ci;}
+        });
+        return { ...cell, colorHex: colorHexList[bi] };
+      });
+      const { bgSet: outlineBgSet } = outlineModeBg(tempCells, GW, GH, lThresh, keepOutline);
+      bgSet = outlineBgSet;
+    } else if(alphaMask){
       // 优先用 remove.bg alpha 通道：把原图尺寸 alpha 采样到 GW×GH 网格
       const { imageData: aData, w: aw, h: ah } = alphaMask;
       for(let gy=0;gy<GH;gy++){
