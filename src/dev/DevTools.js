@@ -44,7 +44,7 @@ export class DevTools {
     this._buildPanel();
 
     // 遮罩：面板关闭时覆盖在 zone 上方，吃掉所有穿透点击
-    const panelW = 200, panelH = 320;
+    const panelW = 200, panelH = 348;
     const mx = VW - panelW - 8, my = 28;
     this._mask = this._scene.add.zone(mx, my, panelW, panelH)
       .setOrigin(0).setDepth(102).setInteractive();
@@ -52,7 +52,7 @@ export class DevTools {
 
   _buildPanel() {
     const VW = this._scene.scale.width;
-    const panelW = 200, panelH = 320;
+    const panelW = 200, panelH = 348;
     const px = VW - panelW - 8, py = 28;
 
     // 背景
@@ -91,7 +91,11 @@ export class DevTools {
     this._buildLevelGrid(px + 8, py + 110, panelW - 16);
 
     // 重载当前关
-    this._addBtn(px + 12, py + panelH - 36, '🔄 重载本关', () => this._jump(this._cur));
+    this._addBtn(px + 12, py + panelH - 64, '🔄 重载本关', () => this._jump(this._cur));
+
+    // 打开编辑器
+    this._addBtn(px + 12, py + panelH - 36, '✏ 编辑器', () => window.open('/editor.html', '_blank'), 84);
+    this._addBtn(px + 108, py + panelH - 36, '🖼 像素工具', () => window.open('/pixel-tool.html', '_blank'), 84);
   }
 
   _buildLevelGrid(x, y, w) {

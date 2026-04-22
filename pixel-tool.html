@@ -136,6 +136,16 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
       <label style="color:#888899">背景色差阈值 <span class="val-display" id="val-bg-thresh">20</span></label>
       <input type="range" id="rng-bg-thresh" min="0" max="80" value="20">
     </div>
+
+    <div style="border-top:1px solid #1c1c38;padding-top:8px;margin-top:8px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px">
+        <input type="checkbox" id="chk-crop-fg" checked style="width:auto;accent-color:#5555cc">
+        <span style="color:#aaaacc">去背景后自动放大主体</span>
+      </label>
+      <label style="color:#888899">边距（格子比例） <span class="val-display" id="val-crop-pad">5</span>%</label>
+      <input type="range" id="rng-crop-pad" min="0" max="20" value="5">
+      <div id="crop-status" style="margin-top:4px;font-size:10px;color:#555577;min-height:14px"></div>
+    </div>
   </div>
 
   <div class="section">
@@ -640,6 +650,7 @@ let currentPalette = {};
 let generatedLevel = null;
 const excludedColors = new Set();
 let detectedPixelSize = 0; // 像素风检测到的元素尺寸（S px），0=未检测到
+let _floodCropDone = false; // 泛洪填充后放大主体仅触发一次，防止循环
 
 // ════════════════════════════════════════════════
 // DOM 绑定
@@ -675,7 +686,114 @@ const rngBgThresh   = document.getElementById('rng-bg-thresh');
 const valBgThresh   = document.getElementById('val-bg-thresh');
 const chkRemoveBg   = document.getElementById('chk-remove-bg');
 rngBgThresh.oninput = ()=>{ valBgThresh.textContent=rngBgThresh.value; if(srcImage) scheduleProcess(); };
-chkRemoveBg.onchange = ()=>{ updateAutoGridBtn(); if(srcImage) scheduleProcess(); };
+chkRemoveBg.onchange = ()=>{ _floodCropDone = false; updateAutoGridBtn(); if(srcImage) scheduleProcess(); };
+const rngCropPad = document.getElementById('rng-crop-pad');
+const valCropPad = document.getElementById('val-crop-pad');
+rngCropPad.oninput = ()=>{ valCropPad.textContent = rngCropPad.value; };
+
+// ════════════════════════════════════════════════
+// 去背景后放大主体到画布边缘
+//
+// 从 alphaMask 中计算前景像素的包围盒（bounding box），
+// 然后把 srcImage 和 alphaMask 都裁剪到该区域后，
+// 等比缩放至填满原始画布尺寸（留 pad% 边距），居中放置。
+// 更新 srcImage（HTMLImageElement → 新 Image）和 alphaMask。
+// ════════════════════════════════════════════════
+
+async function cropToForeground(){
+  if(!alphaMask) return;
+  const chk = document.getElementById('chk-crop-fg');
+  if(!chk.checked) return;
+
+  const pad = parseInt(document.getElementById('rng-crop-pad').value) / 100;
+  const cropStatus = document.getElementById('crop-status');
+
+  const { imageData: aData, w: aw, h: ah } = alphaMask;
+  const d = aData.data;
+
+  // 1. 找前景包围盒
+  let minX = aw, maxX = 0, minY = ah, maxY = 0;
+  for(let y = 0; y < ah; y++){
+    for(let x = 0; x < aw; x++){
+      if(d[(y * aw + x) * 4 + 3] >= 32){
+        if(x < minX) minX = x;
+        if(x > maxX) maxX = x;
+        if(y < minY) minY = y;
+        if(y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if(minX > maxX || minY > maxY){
+    cropStatus.textContent = '未检测到前景，跳过放大';
+    cropStatus.style.color = '#ff8844';
+    return;
+  }
+
+  const fgW = maxX - minX + 1;
+  const fgH = maxY - minY + 1;
+  const origW = srcImage.width;
+  const origH = srcImage.height;
+
+  // 主体已接近满幅（留 5px 余量）则不处理
+  if(fgW >= origW - 5 && fgH >= origH - 5){
+    cropStatus.textContent = '主体已充满，无需放大';
+    cropStatus.style.color = '#555577';
+    return;
+  }
+
+  // 2. 计算目标区域：保持宽高比，带 pad 边距，居中放置
+  const paddedW = origW * (1 - pad * 2);
+  const paddedH = origH * (1 - pad * 2);
+  const scale   = Math.min(paddedW / fgW, paddedH / fgH);
+  const dstW    = Math.round(fgW * scale);
+  const dstH    = Math.round(fgH * scale);
+  const dstX    = Math.round((origW - dstW) / 2);
+  const dstY    = Math.round((origH - dstH) / 2);
+
+  // 3. 重绘 srcImage（原图区域裁剪后缩放到目标位置）
+  const newImgC = document.createElement('canvas');
+  newImgC.width = origW; newImgC.height = origH;
+  const imgCtx = newImgC.getContext('2d');
+  imgCtx.clearRect(0, 0, origW, origH);
+  imgCtx.drawImage(srcImage, minX * origW / aw, minY * origH / ah,
+    fgW * origW / aw, fgH * origH / ah,
+    dstX, dstY, dstW, dstH);
+
+  // 4. 重绘 alphaMask（alpha 图本身也要同步裁剪缩放）
+  const newMaskC = document.createElement('canvas');
+  newMaskC.width = origW; newMaskC.height = origH;
+  const maskCtx = newMaskC.getContext('2d');
+  maskCtx.clearRect(0, 0, origW, origH);
+  // 把 alphaMask imageData 画到临时 canvas 再裁剪
+  const tmpC = document.createElement('canvas');
+  tmpC.width = aw; tmpC.height = ah;
+  tmpC.getContext('2d').putImageData(aData, 0, 0);
+  maskCtx.drawImage(tmpC, minX, minY, fgW, fgH, dstX, dstY, dstW, dstH);
+
+  // 5. 更新全局 srcImage
+  await new Promise(resolve => {
+    const newImg = new Image();
+    newImg.onload = ()=>{ srcImage = newImg; resolve(); };
+    newImg.src = newImgC.toDataURL();
+  });
+
+  // 6. 更新全局 alphaMask
+  alphaMask = {
+    imageData: newMaskC.getContext('2d').getImageData(0, 0, origW, origH),
+    w: origW,
+    h: origH,
+  };
+
+  clearEdgeCache();
+  clearSrcPixelCache();
+  clearSmallImgCache();
+
+  const pct = Math.round(scale * 100);
+  cropStatus.textContent = `✓ 主体放大 ${pct}%（${fgW}×${fgH} → ${dstW}×${dstH}）`;
+  cropStatus.style.color = '#44cc44';
+  document.getElementById('info-orig').textContent = `${origW} × ${origH}（主体已放大）`;
+}
 
 // ── remove.bg 抠图 ──
 const rmbgKeyInput = document.getElementById('rmbg-key');
@@ -719,7 +837,7 @@ btnRmbg.onclick = async ()=>{
     // 解析返回的透明 PNG，提取 alpha 通道
     const buf  = await res.arrayBuffer();
     const rmbgImg = new Image();
-    rmbgImg.onload = ()=>{
+    rmbgImg.onload = async ()=>{
       // 把 remove.bg 结果画到离屏 canvas，读 alpha 通道
       const ac = document.createElement('canvas');
       ac.width = rmbgImg.width; ac.height = rmbgImg.height;
@@ -734,7 +852,8 @@ btnRmbg.onclick = async ()=>{
       rmbgStatus.style.color = '#44cc44';
       btnRmbg.disabled = false;
       updateAutoGridBtn();
-      // 抠图完成后自动寻优网格
+      // 抠图完成后放大主体，再寻优网格
+      await cropToForeground();
       runAutoGrid();
     };
     rmbgImg.onerror = ()=>{ throw new Error('图片解析失败'); };
@@ -1504,6 +1623,8 @@ fileInput.onchange = (e)=>{
     alphaMask = null;
     detectedPixelSize = 0;
     compareTopResults = [];
+    _floodCropDone = false;
+    document.getElementById('crop-status').textContent = '';
     clearEdgeCache();
     clearSrcPixelCache();
     clearSmallImgCache();
@@ -1645,6 +1766,36 @@ function runProcess(){
         return { ...cell, colorHex: rgbHex(...rootColors[uniqueRoots[bi]]) };
       });
       bgSet = floodFillBg(tempCells, GW, GH, bgThreshold);
+
+      // 泛洪填充结果 → alphaMask → 触发主体放大（仅首次，防循环）
+      const chkCrop = document.getElementById('chk-crop-fg');
+      if(chkCrop.checked && !_floodCropDone){
+        _floodCropDone = true;
+        // 把 bgSet（网格坐标）转换成原图尺寸的 alpha 图
+        const fw = srcImage.width, fh = srcImage.height;
+        const maskData = new ImageData(fw, fh);
+        for(let gy = 0; gy < GH; gy++){
+          for(let gx = 0; gx < GW; gx++){
+            const isBg = bgSet.has(`${gx},${gy}`);
+            const alpha = isBg ? 0 : 255;
+            const x0 = Math.floor(gx / GW * fw), x1 = Math.ceil((gx + 1) / GW * fw);
+            const y0 = Math.floor(gy / GH * fh), y1 = Math.ceil((gy + 1) / GH * fh);
+            for(let py = y0; py < Math.min(y1, fh); py++){
+              for(let px = x0; px < Math.min(x1, fw); px++){
+                const idx = (py * fw + px) * 4;
+                maskData.data[idx]   = 255;
+                maskData.data[idx+1] = 255;
+                maskData.data[idx+2] = 255;
+                maskData.data[idx+3] = alpha;
+              }
+            }
+          }
+        }
+        alphaMask = { imageData: maskData, w: fw, h: fh };
+        clearEdgeCache(); clearSrcPixelCache(); clearSmallImgCache();
+        // 异步：放大主体后重新寻优（不阻塞当前 runProcess 的后续绘制）
+        cropToForeground().then(() => runAutoGrid());
+      }
     }
 
     // 7. 过滤掉背景格子
@@ -1748,11 +1899,11 @@ btnGenerate.onclick = ()=>{
   const GH = parseInt(rngGH.value);
   const numLanes = parseInt(document.getElementById('lane-count').value);
 
-  // 按颜色分组
+  // 按颜色分组，y 坐标翻转（canvas: 0=顶 → JSON: 0=底）
   const colorGroups = {};
   for(const c of currentCells){
     if(!colorGroups[c.colorHex]) colorGroups[c.colorHex]=[];
-    colorGroups[c.colorHex].push({x:c.x, y:c.y});
+    colorGroups[c.colorHex].push({ x: c.x, y: (GH - 1) - c.y });
   }
 
   // 构建 entities
@@ -1762,23 +1913,28 @@ btnGenerate.onclick = ()=>{
     cells,
   }));
 
-  // 构建 lanes（弹药 = cells数/2 向上取整，已是10的倍数所以一定整除）
-  // 将炮车均匀分配到各队列
+  // 构建 initialTanks：弹药数 = 方块数（已保证是10的倍数）
+  // 按数量降序，轮流分配到各队列
   const allTurretDefs = [];
   for(const [color, cells] of Object.entries(colorGroups)){
-    const ammo = Math.max(10, Math.ceil(cells.length / 2 / 10) * 10);
-    allTurretDefs.push({ color, ammo });
+    allTurretDefs.push({ color, ammo: cells.length });
   }
-
-  // 按数量降序排列（让大颜色优先分配）
   allTurretDefs.sort((a,b)=>{
-    const ca = colorGroups[a.color].length;
-    const cb = colorGroups[b.color].length;
-    return cb - ca;
+    return colorGroups[b.color].length - colorGroups[a.color].length;
   });
 
-  const lanes = Array.from({length: numLanes}, ()=>[]);
-  allTurretDefs.forEach((def, i)=> lanes[i % numLanes].push(def));
+  const initialTanks = [];
+  // 记录每个队列当前已有的炮车数量（作为 position）
+  const lanePos = new Array(numLanes).fill(0);
+  allTurretDefs.forEach((def, i)=>{
+    const lane = i % numLanes;
+    initialTanks.push({
+      color: def.color,
+      ammo:  def.ammo,
+      lane,
+      position: lanePos[lane]++,
+    });
+  });
 
   const levelNum = parseInt(document.getElementById('level-num').value);
 
@@ -1788,8 +1944,7 @@ btnGenerate.onclick = ()=>{
     boardSize:   Math.max(GW, GH),
     numberOfLanes: numLanes,
     entities,
-    lanes,
-    turrets: [],
+    initialTanks,
   };
 
   const jsonStr = JSON.stringify(generatedLevel, null, 2);
