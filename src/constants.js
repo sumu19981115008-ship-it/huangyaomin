@@ -41,4 +41,5 @@ export const BUFFER_COLORS = [
 ];
 
 // 可用关卡总数
-export const TOTAL_LEVELS = 301;
+export const TOTAL_LEVELS   = 301;
+export const TOTAL_LEVELS_B = 167;

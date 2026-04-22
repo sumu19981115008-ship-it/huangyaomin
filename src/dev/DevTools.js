@@ -229,6 +229,12 @@ export class DevTools {
     }
   }
 
+  /** 切换关卡组时更新总关卡数 */
+  setTotalLevels(n) {
+    this._totalLevels = n;
+    this._refreshCurrent(this._cur ?? 0);
+  }
+
   _refreshCurrent(idx) {
     this._txCurrent?.setText(`当前：Level ${idx + 1} / ${this._totalLevels}`);
   }

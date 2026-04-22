@@ -1,6 +1,8 @@
 ﻿# serve.ps1 - static server + API (no node required)
-# GET  /api/level-list   - returns sorted JSON array of level filenames
-# POST /api/save-level   - saves body.data to levels/body.filename
+# GET  /api/level-list      - 旧格式 A 组关卡列表（levels/）
+# POST /api/save-level      - 旧格式 A 组保存
+# GET  /api/level-list-a2   - levels2 格式 A 组关卡列表（levels_a2/）
+# POST /api/save-level-a2   - levels2 格式 A 组保存
 
 $port = 5174
 $root = $PSScriptRoot
@@ -39,7 +41,7 @@ try {
     $resp = $ctx.Response
     $urlPath = $req.Url.LocalPath
 
-    # GET /api/level-list
+    # GET /api/level-list（旧格式，保留兼容）
     if ($urlPath -eq "/api/level-list" -and $req.HttpMethod -eq "GET") {
       $levelsDir = Join-Path $root "levels"
       $files = Get-ChildItem -Path $levelsDir -Filter "level*.json" |
@@ -51,7 +53,19 @@ try {
       continue
     }
 
-    # POST /api/save-level
+    # GET /api/level-list-a2（levels2 格式 A 组）
+    if ($urlPath -eq "/api/level-list-a2" -and $req.HttpMethod -eq "GET") {
+      $levelsDir = Join-Path $root "levels_a2"
+      $files = Get-ChildItem -Path $levelsDir -Filter "level*.json" |
+        Where-Object { $_.Name -match "^level\d+\.json$" } |
+        Sort-Object { [int]($_.BaseName -replace "\D","") } |
+        Select-Object -ExpandProperty Name
+      Send-Json $resp @($files)
+      $resp.Close()
+      continue
+    }
+
+    # POST /api/save-level（旧格式，保留兼容）
     if ($urlPath -eq "/api/save-level" -and $req.HttpMethod -eq "POST") {
       $reader  = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
       $bodyStr = $reader.ReadToEnd()
@@ -63,6 +77,29 @@ try {
           Send-Json $resp @{ error = "invalid filename" } 400
         } else {
           $fp       = Join-Path $root "levels\$filename"
+          $dataJson = $body.data | ConvertTo-Json -Compress -Depth 20
+          [System.IO.File]::WriteAllText($fp, $dataJson, [System.Text.Encoding]::UTF8)
+          Send-Json $resp @{ ok = $true }
+        }
+      } catch {
+        Send-Json $resp @{ error = $_.Exception.Message } 500
+      }
+      $resp.Close()
+      continue
+    }
+
+    # POST /api/save-level-a2（levels2 格式 A 组）
+    if ($urlPath -eq "/api/save-level-a2" -and $req.HttpMethod -eq "POST") {
+      $reader  = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
+      $bodyStr = $reader.ReadToEnd()
+      $reader.Close()
+      try {
+        $body     = $bodyStr | ConvertFrom-Json
+        $filename = $body.filename
+        if ($filename -notmatch "^level\d+\.json$") {
+          Send-Json $resp @{ error = "invalid filename" } 400
+        } else {
+          $fp       = Join-Path $root "levels_a2\$filename"
           $dataJson = $body.data | ConvertTo-Json -Compress -Depth 20
           [System.IO.File]::WriteAllText($fp, $dataJson, [System.Text.Encoding]::UTF8)
           Send-Json $resp @{ ok = $true }

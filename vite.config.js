@@ -5,6 +5,12 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function sortedLevelFiles(dir) {
+  return fs.readdirSync(dir)
+    .filter(f => /^level\d+\.json$/.test(f))
+    .sort((a, b) => parseInt(a.replace(/\D/g, '')) - parseInt(b.replace(/\D/g, '')));
+}
+
 export default defineConfig({
   server: {
     port: 5174,
@@ -14,15 +20,26 @@ export default defineConfig({
     {
       name: 'editor-api',
       configureServer(server) {
-        // POST /api/save-level  body: { filename: 'level1.json', data: {...} }
+
+        // GET /api/level-list（旧格式，保留兼容）
+        server.middlewares.use('/api/level-list', (req, res) => {
+          const files = sortedLevelFiles(path.resolve(__dirname, 'levels'));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(files));
+        });
+
+        // GET /api/level-list-a2（levels2 格式 A 组）
+        server.middlewares.use('/api/level-list-a2', (req, res) => {
+          const files = sortedLevelFiles(path.resolve(__dirname, 'levels_a2'));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(files));
+        });
+
+        // POST /api/save-level（旧格式，保留兼容）
         server.middlewares.use('/api/save-level', (req, res) => {
-          if (req.method !== 'POST') {
-            res.statusCode = 405;
-            res.end('Method Not Allowed');
-            return;
-          }
+          if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
           let body = '';
-          req.on('data', chunk => { body += chunk; });
+          req.on('data', c => { body += c; });
           req.on('end', () => {
             try {
               const { filename, data } = JSON.parse(body);
@@ -31,8 +48,7 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: '非法文件名' }));
                 return;
               }
-              const filepath = path.resolve(__dirname, 'levels', filename);
-              fs.writeFileSync(filepath, JSON.stringify(data, null, 0));
+              fs.writeFileSync(path.resolve(__dirname, 'levels', filename), JSON.stringify(data, null, 0));
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {
@@ -42,17 +58,27 @@ export default defineConfig({
           });
         });
 
-        // GET /api/level-list  返回所有关卡文件名列表
-        server.middlewares.use('/api/level-list', (req, res) => {
-          const dir = path.resolve(__dirname, 'levels');
-          const files = fs.readdirSync(dir)
-            .filter(f => /^level\d+\.json$/.test(f))
-            .sort((a, b) => {
-              const n = s => parseInt(s.replace(/\D/g, ''));
-              return n(a) - n(b);
-            });
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify(files));
+        // POST /api/save-level-a2（levels2 格式 A 组）
+        server.middlewares.use('/api/save-level-a2', (req, res) => {
+          if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
+          let body = '';
+          req.on('data', c => { body += c; });
+          req.on('end', () => {
+            try {
+              const { filename, data } = JSON.parse(body);
+              if (!filename || !/^level\d+\.json$/.test(filename)) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: '非法文件名' }));
+                return;
+              }
+              fs.writeFileSync(path.resolve(__dirname, 'levels_a2', filename), JSON.stringify(data, null, 0));
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: e.message }));
+            }
+          });
         });
       },
     },

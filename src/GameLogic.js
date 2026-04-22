@@ -82,9 +82,12 @@ export class GameLogic {
   loadLevel(data) {
     _nextId = 0;
 
-    // ── 动态几何计算（与 game1 公式一致）──────────────────────
-    const bw = data.boardWidth  || 20;
-    const bh = data.boardHeight || 20;
+    // ── 解析棋盘尺寸（levels2格式优先用PixelImageData.width/height）──────
+    const pixData = data.PixelImageData ?? {};
+    const bw = pixData.width  || data.boardWidth  || 20;
+    const bh = pixData.height || data.boardHeight || 20;
+
+    // ── 动态几何计算 ───────────────────────────────────────────────────────
     const CANVAS_Y = CANVAS_Y_FIXED;
     const cellByW  = Math.floor((VW - 40) / bw);
     const cellByH  = Math.floor((VH - CANVAS_Y - UI_RESERVE) / bh);
@@ -102,57 +105,42 @@ export class GameLogic {
       ITEM_BAR_Y, BUFFER_Y, QUEUE_Y,
       LEN_BOTTOM, LEN_RIGHT, LEN_TOP, LEN_LEFT, TOTAL_DIST,
     });
-    // ──────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
 
     this.grid      = Array.from({ length: bh }, () => Array(bw).fill(null));
     this.blocks    = [];
-    this.obstacles = [];   // 预留：障碍物列表，{ x, y, type, ...data }
+    this.obstacles = [];
     this.lanes     = [];
     this.turrets   = [];
     this.buffer    = [];
     this.pendingBullets  = [];
     this.inFlightTargets = new Set();
-    this.trackCap        = TRACK_CAP;
-    this.bufferCap       = BUFFER_CAP;
+    this.trackCap        = data.SlotCount     ?? TRACK_CAP;
+    this.bufferCap       = data.ConveyorLimit ?? BUFFER_CAP;
     this.speedMult       = 1;
     this.endgameStarted  = false;
     this.state           = 'playing';
     this.failReason      = null;
 
-    for (const entity of data.entities) {
-      const color = entity.color?.toUpperCase();
-      const cells = entity.cells ?? [];
-      switch (entity.type) {
-        case 'PixelBlock':
-          for (const cell of cells) {
-            const col = cell.x;
-            const row = (bh - 1) - cell.y;
-            if (col < 0 || col >= bw || row < 0 || row >= bh) continue;
-            this.grid[row][col] = color;
-            this.blocks.push({ x: col, y: row, color });
-          }
-          break;
-        default:
-          // 未知 entity 类型暂存到 obstacles，后续障碍开发时在此 switch 增加 case
-          for (const cell of cells) {
-            const col = cell.x;
-            const row = (bh - 1) - cell.y;
-            if (col < 0 || col >= bw || row < 0 || row >= bh) continue;
-            this.obstacles.push({ x: col, y: row, type: entity.type, color, raw: entity });
-          }
-          break;
-      }
+    // colorTable: material下标 → hex颜色字符串
+    const colorTable = data.colorTable ?? [];
+    const matToColor = (mat) => (colorTable[mat] ?? '#FFFFFF').toUpperCase();
+
+    // ── 解析像素方块（levels2坐标：y=0在顶部，直接使用，无需翻转）────────
+    for (const p of pixData.pixels ?? []) {
+      const col = p.x;
+      const row = p.y;
+      if (col < 0 || col >= bw || row < 0 || row >= bh) continue;
+      const color = matToColor(p.material);
+      this.grid[row][col] = color;
+      this.blocks.push({ x: col, y: row, color });
     }
 
-    const numLanes = data.numberOfLanes ?? 2;
-    for (let i = 0; i < numLanes; i++) this.lanes.push([]);
-
-    const sorted = [...data.initialTanks].sort((a, b) =>
-      a.lane !== b.lane ? a.lane - b.lane : a.position - b.position
-    );
-    for (const t of sorted) {
-      if (t.lane >= 0 && t.lane < numLanes)
-        this.lanes[t.lane].push(new TurretDef(t.color.toUpperCase(), t.ammo));
+    // ── 解析炮车队列（QueueGroup: 每个元素是一条队列数组）────────────────
+    for (const lane of data.QueueGroup ?? []) {
+      this.lanes.push(
+        lane.map(t => new TurretDef(matToColor(t.material), t.ammo))
+      );
     }
   }
 

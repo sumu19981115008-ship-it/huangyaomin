@@ -9,6 +9,7 @@ import {
   VW, VH,
   C_BG,
   TOTAL_LEVELS,
+  TOTAL_LEVELS_B,
 } from './constants.js';
 
 export class GameScene extends Phaser.Scene {
@@ -22,6 +23,8 @@ export class GameScene extends Phaser.Scene {
 
     this.levelIndex = 0;
     this.levels     = [];
+    this.levelsB    = [];
+    this.group      = 'A';   // 当前关卡组 'A' | 'B'
     this.g          = null;
     this.overlayG   = null;
     this._lastState = null;
@@ -37,6 +40,7 @@ export class GameScene extends Phaser.Scene {
     this.txQueueCounts = [];
     this.txBufferLabel = null;
     this.txQueueLabel  = null;
+    this.txGroupBtn    = null;   // A/B 切换按钮文本
 
     this._endgameDeployDone = false;
   }
@@ -47,7 +51,10 @@ export class GameScene extends Phaser.Scene {
 
   preload() {
     for (let i = 1; i <= TOTAL_LEVELS; i++) {
-      this.load.json(`level${i}`, `/levels/level${i}.json`);
+      this.load.json(`level${i}`, `/levels_a2/level${i}.json`);
+    }
+    for (let i = 1; i <= TOTAL_LEVELS_B; i++) {
+      this.load.json(`level_b${i}`, `/levels_b2/level${i}.json`);
     }
   }
 
@@ -67,13 +74,19 @@ export class GameScene extends Phaser.Scene {
       const d = this.cache.json.get(`level${i}`);
       if (d) this.levels.push(d);
     }
+    this.levelsB = [];
+    for (let i = 1; i <= TOTAL_LEVELS_B; i++) {
+      const d = this.cache.json.get(`level_b${i}`);
+      if (d) this.levelsB.push(d);
+    }
+    // levels_a2 / levels_b2 均为统一的 levels2 格式（含 colorTable + QueueGroup）
 
     this._createTexts();
     this.items.create();
     this._loadCurrentLevel();
 
     this.devTools = new DevTools(this, {
-      totalLevels: this.levels.length,
+      totalLevels: this._currentLevels().length,
       onJump: (idx) => { this.levelIndex = idx; this._loadCurrentLevel(); },
     });
 
@@ -96,15 +109,27 @@ export class GameScene extends Phaser.Scene {
 
   // ── 关卡管理 ──────────────────────────────────────────────────
 
+  _currentLevels() {
+    return this.group === 'B' ? this.levelsB : this.levels;
+  }
+
+  _switchGroup() {
+    this.group = this.group === 'A' ? 'B' : 'A';
+    this.levelIndex = 0;
+    this.txGroupBtn.setText(this.group === 'A' ? '切换 B 组' : '切换 A 组');
+    this.devTools?.setTotalLevels(this._currentLevels().length);
+    this._loadCurrentLevel();
+  }
+
   _loadCurrentLevel() {
-    const data = this.levels[this.levelIndex];
+    const data = this._currentLevels()[this.levelIndex];
     if (!data) return;
     this.logic.loadLevel(data);
     this.bullets.reset();
     this._lastState = 'playing';
     this._endgameDeployDone = false;
     this.items.reset();
-    this.txLevel.setText(`Level ${this.levelIndex + 1}`);
+    this.txLevel.setText(`${this.group === 'B' ? '[B]' : ''} Level ${this.levelIndex + 1}`);
     this._hideOverlay();
     this._updateLabels();
     this.devTools?.sync(this.levelIndex);
@@ -116,7 +141,7 @@ export class GameScene extends Phaser.Scene {
     const state = this.logic.state;
 
     if (state === 'win') {
-      this.levelIndex = (this.levelIndex + 1) % this.levels.length;
+      this.levelIndex = (this.levelIndex + 1) % this._currentLevels().length;
       this._loadCurrentLevel();
       return;
     }
@@ -236,6 +261,15 @@ export class GameScene extends Phaser.Scene {
       this.txQueueItems.push(this.add.text(0, 0, '', style(10)).setOrigin(0.5).setVisible(false).setDepth(6));
     for (let i = 0; i < 8; i++)
       this.txQueueCounts.push(this.add.text(0, 0, '', style(13, '#9999cc')).setOrigin(0.5).setVisible(false).setDepth(6));
+
+    // A/B 组切换按钮
+    this.txGroupBtn = this.add.text(VW - 8, 10, '切换 B 组', style(13, '#aaddff'))
+      .setOrigin(1, 0)
+      .setDepth(20)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', () => this.txGroupBtn.setColor('#ffffff'))
+      .on('pointerout',  () => this.txGroupBtn.setColor('#aaddff'))
+      .on('pointerdown', () => this._switchGroup());
   }
 
   _updateLabels() {
