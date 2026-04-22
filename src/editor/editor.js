@@ -9,6 +9,7 @@ const state = {
   currentFile: null,   // 当前文件名
   data: null,          // 当前关卡 JSON 对象（直接操作）
   brushColor: null,    // 当前画笔颜色，null = 橡皮
+  brushTool: 'pixel',  // 'pixel' | 'obstacle' — 预留障碍画笔工具
   zoom: 16,            // 每格像素
   painting: false,     // 鼠标按下中
   paintMode: null,     // 'draw' | 'erase'
@@ -42,6 +43,9 @@ const floor10 = n => Math.floor(n / 10) * 10;
 const clamp   = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 function colorUpper(c) { return c.toUpperCase(); }
+
+// hex 格式校验：接受 #RGB 或 #RRGGBB
+function isValidHex(hex) { return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex); }
 
 // 统计有效方块（过滤越界）
 function countBlocks(data) {
@@ -93,12 +97,18 @@ function tankTemplate(color, ammo, lane, position) {
 // ── 关卡列表 ──────────────────────────────────────────────────────────────────
 
 async function loadLevelList() {
-  const res  = await fetch('/api/level-list');
-  state.levels = await res.json();
+  try {
+    const res = await fetch('/api/level-list');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    state.levels = await res.json();
+  } catch (e) {
+    setStatus(`关卡列表加载失败：${e.message}`);
+    return;
+  }
   elLevelList.innerHTML = '';
   for (const fname of state.levels) {
-    const num  = fname.replace('level', '').replace('.json', '');
-    const div  = document.createElement('div');
+    const num = fname.replace('level', '').replace('.json', '');
+    const div = document.createElement('div');
     div.className = 'level-item';
     div.textContent = `Level ${num}`;
     div.dataset.file = fname;
@@ -110,18 +120,24 @@ async function loadLevelList() {
 // ── 关卡加载 ──────────────────────────────────────────────────────────────────
 
 async function openLevel(fname) {
-  const res  = await fetch(`/levels/${fname}`);
-  state.data = await res.json();
+  try {
+    const res = await fetch(`/levels/${fname}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    state.data = await res.json();
+  } catch (e) {
+    setStatus(`关卡加载失败：${e.message}`);
+    return;
+  }
   state.currentFile = fname;
 
   // 确保字段存在
-  if (!state.data.boardWidth)  state.data.boardWidth  = state.data.boardSize || 20;
-  if (!state.data.boardHeight) state.data.boardHeight = state.data.boardSize || 20;
-  if (!state.data.numberOfLanes)  state.data.numberOfLanes  = 2;
-  if (!state.data.initialTanks)   state.data.initialTanks   = [];
-  if (!state.data.entities)       state.data.entities       = [];
-  if (!state.data.shooterPipes)   state.data.shooterPipes   = [];
-  if (!state.data.maxTanksOnConveyor) state.data.maxTanksOnConveyor = 5;
+  if (!state.data.boardWidth)          state.data.boardWidth  = state.data.boardSize || 20;
+  if (!state.data.boardHeight)         state.data.boardHeight = state.data.boardSize || 20;
+  if (!state.data.numberOfLanes)       state.data.numberOfLanes       = 2;
+  if (!state.data.initialTanks)        state.data.initialTanks        = [];
+  if (!state.data.entities)            state.data.entities            = [];
+  if (!state.data.shooterPipes)        state.data.shooterPipes        = [];
+  if (!state.data.maxTanksOnConveyor)  state.data.maxTanksOnConveyor  = 5;
 
   // 高亮列表
   document.querySelectorAll('.level-item').forEach(el => {
@@ -129,16 +145,17 @@ async function openLevel(fname) {
   });
 
   // 同步工具栏
-  elTbWidth.value  = state.data.boardWidth;
-  elTbHeight.value = state.data.boardHeight;
-  elPropW.value    = state.data.boardWidth;
-  elPropH.value    = state.data.boardHeight;
+  elTbWidth.value   = state.data.boardWidth;
+  elTbHeight.value  = state.data.boardHeight;
+  elPropW.value     = state.data.boardWidth;
+  elPropH.value     = state.data.boardHeight;
   elPropLanes.value = state.data.numberOfLanes;
 
-  // 初始化画笔颜色（取第一个颜色）
+  // 初始化画笔颜色：只在当前颜色不在新关卡的颜色列表中时才重置
+  // （null = 橡皮，应保留；有效颜色不在列表中才切换）
   const colors = allColors(state.data);
-  if (colors.length && !colors.includes(state.brushColor)) {
-    state.brushColor = colors[0];
+  if (state.brushColor !== null && !colors.includes(state.brushColor)) {
+    state.brushColor = colors[0] ?? null;
   }
 
   renderBrushPalette();
@@ -163,7 +180,7 @@ function renderCanvas() {
   ctx.fillStyle = '#13132a';
   ctx.fillRect(0, 0, bw * z, bh * z);
 
-  // 方块
+  // PixelBlock 方块
   const bmap = buildCellMap();
   for (let row = 0; row < bh; row++) {
     for (let col = 0; col < bw; col++) {
@@ -171,7 +188,6 @@ function renderCanvas() {
       if (color) {
         ctx.fillStyle = color;
         ctx.fillRect(col * z + 1, row * z + 1, z - 2, z - 2);
-        // 高光
         ctx.fillStyle = 'rgba(255,255,255,0.18)';
         ctx.fillRect(col * z + 1, row * z + 1, z - 2, 3);
         ctx.fillRect(col * z + 1, row * z + 1, 3, z - 2);
@@ -179,29 +195,43 @@ function renderCanvas() {
     }
   }
 
+  // ── 障碍元素绘制扩展点 ──────────────────────────────────────────────────────
+  // 当新增障碍类型时，在此按 obs.type 分发绘制，不影响上方 PixelBlock 逻辑。
+  // renderObstacles(ctx, state.data.entities, bw, bh, z);
+  // ────────────────────────────────────────────────────────────────────────────
+
   // 网格线
   ctx.strokeStyle = '#1c1c38';
-  ctx.lineWidth = 0.5;
+  ctx.lineWidth   = 0.5;
   for (let c = 0; c <= bw; c++) {
-    ctx.beginPath();
-    ctx.moveTo(c * z, 0);
-    ctx.lineTo(c * z, bh * z);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c * z, 0); ctx.lineTo(c * z, bh * z); ctx.stroke();
   }
   for (let r = 0; r <= bh; r++) {
-    ctx.beginPath();
-    ctx.moveTo(0, r * z);
-    ctx.lineTo(bw * z, r * z);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, r * z); ctx.lineTo(bw * z, r * z); ctx.stroke();
   }
 
   // 边框
   ctx.strokeStyle = '#3a3a62';
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth   = 1.5;
   ctx.strokeRect(0, 0, bw * z, bh * z);
 }
 
-// 构建 row→col→color 快速查找表
+// ── 障碍元素渲染（预留，新增障碍类型时取消注释并实现）─────────────────────────
+// function renderObstacles(ctx, entities, bw, bh, z) {
+//   for (const e of entities) {
+//     if (e.type === 'PixelBlock') continue;
+//     for (const cell of (e.cells ?? [])) {
+//       const row = (bh - 1) - cell.y;
+//       if (cell.x < 0 || cell.x >= bw || row < 0 || row >= bh) continue;
+//       switch (e.type) {
+//         case 'Wall':  drawWall(ctx, cell.x, row, z); break;
+//         // case 'NewObstacleType': drawXxx(...); break;
+//       }
+//     }
+//   }
+// }
+
+// 构建 row→col→color 快速查找表（仅 PixelBlock）
 function buildCellMap() {
   if (!state.data) return {};
   const bw = state.data.boardWidth, bh = state.data.boardHeight;
@@ -223,11 +253,11 @@ function buildCellMap() {
 // ── 画笔 ──────────────────────────────────────────────────────────────────────
 
 function canvasColRow(e) {
-  const rect = elCanvas.getBoundingClientRect();
+  const rect   = elCanvas.getBoundingClientRect();
   const scaleX = elCanvas.width  / rect.width;
   const scaleY = elCanvas.height / rect.height;
-  const col = Math.floor((e.clientX - rect.left) * scaleX / state.zoom);
-  const row = Math.floor((e.clientY - rect.top)  * scaleY / state.zoom);
+  const col    = Math.floor((e.clientX - rect.left) * scaleX / state.zoom);
+  const row    = Math.floor((e.clientY - rect.top)  * scaleY / state.zoom);
   return { col, row };
 }
 
@@ -236,10 +266,14 @@ function paintCell(col, row) {
   const bw = state.data.boardWidth, bh = state.data.boardHeight;
   if (col < 0 || col >= bw || row < 0 || row >= bh) return;
 
+  // ── 工具分发扩展点 ────────────────────────────────────────────────────────
+  // 新增障碍画笔时在此加 case，不影响 pixel 逻辑。
+  // if (state.brushTool === 'obstacle') { paintObstacleCell(col, row); return; }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const cellY = (bh - 1) - row;
 
   if (state.paintMode === 'erase') {
-    // 从所有实体中删除该坐标
     for (const e of state.data.entities) {
       if (e.type !== 'PixelBlock') continue;
       const idx = e.cells.findIndex(c => c.x === col && c.y === cellY);
@@ -260,7 +294,6 @@ function paintCell(col, row) {
       entity = { type: 'PixelBlock', color: state.brushColor, cells: [], pixelCount: 0, colorRanges: [] };
       state.data.entities.push(entity);
     }
-    // 检查是否已存在
     if (!entity.cells.find(c => c.x === col && c.y === cellY)) {
       entity.cells.push({ x: col, y: cellY });
     }
@@ -271,9 +304,21 @@ function paintCell(col, row) {
   updateInfo(col, row);
 }
 
+// ── 障碍画笔（预留，新增障碍类型时实现）──────────────────────────────────────
+// function paintObstacleCell(col, row) {
+//   const bh = state.data.boardHeight;
+//   const cellY = (bh - 1) - row;
+//   if (state.paintMode === 'erase') {
+//     // 从 obstacles 实体中删除该坐标
+//   } else {
+//     // 写入障碍实体，type 由当前障碍工具决定
+//   }
+//   renderCanvas();
+// }
+
 function updateInfo(col, row) {
   if (!state.data) return;
-  const bh = state.data.boardHeight;
+  const bh   = state.data.boardHeight;
   const cellY = (bh - 1) - row;
   elTbInfo.textContent = `col=${col} row=${row}  →  x=${col} y=${cellY}`;
 }
@@ -288,7 +333,7 @@ function renderBrushPalette() {
   // 橡皮
   const eraser = document.createElement('div');
   eraser.className = 'brush-swatch eraser' + (state.brushColor === null ? ' active' : '');
-  eraser.title = '橡皮';
+  eraser.title    = '橡皮（E）';
   eraser.textContent = '✕';
   eraser.addEventListener('click', () => { state.brushColor = null; renderBrushPalette(); });
   elBrushColors.appendChild(eraser);
@@ -307,21 +352,21 @@ function renderBrushPalette() {
 
 function renderColorRows() {
   if (!state.data) return;
-  const blocks = countBlocks(state.data);
-  const ammo   = countAmmo(state.data);
-  const colors = allColors(state.data);
+  const blocks   = countBlocks(state.data);
+  const ammo     = countAmmo(state.data);
+  const colors   = allColors(state.data);
   const numLanes = state.data.numberOfLanes || 2;
 
   elColorRows.innerHTML = '';
 
   for (const c of colors) {
-    const b = blocks[c] || 0;
-    const a = ammo[c]   || 0;
-    const ok = b === a && b % 10 === 0;
-    const warn = b !== a || b % 10 !== 0;
+    const b  = blocks[c] || 0;
+    const a  = ammo[c]   || 0;
+    const ok = b === a && b % 10 === 0 && b > 0;
+    const warn = !ok;
 
     const row = document.createElement('div');
-    row.className = 'color-row' + (ok ? ' ok' : (warn ? ' error' : ''));
+    row.className = 'color-row' + (ok ? ' ok' : ' error');
 
     const head = document.createElement('div');
     head.className = 'color-row-head';
@@ -337,11 +382,11 @@ function renderColorRows() {
     const stat = document.createElement('span');
     stat.className = 'color-stat' + (ok ? ' ok' : ' warn');
     stat.textContent = `块${b} 弹${a}`;
-    stat.title = ok ? '对齐' : (b !== a ? '数量不对齐' : '不是10的倍数');
+    stat.title = ok ? '对齐' : (b !== a ? '数量不对齐' : (b % 10 !== 0 ? '不是10的倍数' : '方块为空'));
 
     const del = document.createElement('button');
     del.className = 'del-color-btn';
-    del.title = '删除此颜色所有方块和炮车';
+    del.title     = '删除此颜色所有方块和炮车';
     del.textContent = '✕';
     del.addEventListener('click', () => deleteColor(c));
 
@@ -373,23 +418,24 @@ function renderColorRows() {
       laneEl.addEventListener('change', () => {
         t.lane = parseInt(laneEl.value);
         reorderTankPositions();
+        renderColorRows();
       });
 
       const ammoEl = document.createElement('input');
-      ammoEl.type = 'number';
-      ammoEl.min  = 10;
-      ammoEl.step = 10;
+      ammoEl.type  = 'number';
+      ammoEl.min   = 10;
+      ammoEl.step  = 10;
       ammoEl.value = t.ammo;
       ammoEl.addEventListener('change', () => {
-        t.ammo = Math.max(10, Math.round(parseInt(ammoEl.value) / 10) * 10 || 10);
+        t.ammo     = Math.max(10, Math.round(parseInt(ammoEl.value) / 10) * 10 || 10);
         ammoEl.value = t.ammo;
         renderColorRows();
       });
 
       const delT = document.createElement('button');
-      delT.className = 'del-tank-btn';
+      delT.className   = 'del-tank-btn';
       delT.textContent = '−';
-      delT.title = '删除此炮车';
+      delT.title       = '删除此炮车';
       delT.addEventListener('click', () => {
         const idx = state.data.initialTanks.indexOf(t);
         if (idx !== -1) state.data.initialTanks.splice(idx, 1);
@@ -397,19 +443,25 @@ function renderColorRows() {
         renderColorRows();
       });
 
+      // ── 高级属性扩展点 ──────────────────────────────────────────────────────
+      // 新增 isMystery / isLinked / isLock / isHammer UI 时在此 trow 内追加控件，
+      // tankTemplate 已包含全部字段，数据层无需改动。
+      // ─────────────────────────────────────────────────────────────────────
+
       trow.append(laneEl, ammoEl, delT);
       tankConfig.appendChild(trow);
     }
 
-    // 添加炮车按钮
+    // 添加炮车
     const addBtn = document.createElement('button');
-    addBtn.className = 'add-tank-btn';
+    addBtn.className   = 'add-tank-btn';
     addBtn.textContent = '+ 添加炮车';
     addBtn.addEventListener('click', () => {
-      const maxPos = Math.max(-1, ...state.data.initialTanks
-        .filter(t => colorUpper(t.color) === c)
+      // position 按该颜色在各 lane 内独立计数
+      const maxPosInLane0 = Math.max(-1, ...state.data.initialTanks
+        .filter(t => colorUpper(t.color) === c && t.lane === 0)
         .map(t => t.position));
-      state.data.initialTanks.push(tankTemplate(c, 10, 0, maxPos + 1));
+      state.data.initialTanks.push(tankTemplate(c, 10, 0, maxPosInLane0 + 1));
       reorderTankPositions();
       renderColorRows();
     });
@@ -436,10 +488,12 @@ function reorderTankPositions() {
 // ── 颜色管理 ──────────────────────────────────────────────────────────────────
 
 function addColor(hex) {
+  if (!isValidHex(hex)) {
+    showSaveMsg('颜色格式无效（需要 #RGB 或 #RRGGBB）', 'err');
+    return;
+  }
   const c = colorUpper(hex);
-  const exists = allColors(state.data).includes(c);
-  if (!exists) {
-    // 添加空实体占位
+  if (!allColors(state.data).includes(c)) {
     state.data.entities.push({ type: 'PixelBlock', color: c, cells: [], pixelCount: 0, colorRanges: [] });
   }
   state.brushColor = c;
@@ -448,11 +502,9 @@ function addColor(hex) {
 }
 
 function deleteColor(c) {
-  // 删方块
-  state.data.entities = state.data.entities.filter(
+  state.data.entities     = state.data.entities.filter(
     e => !(e.type === 'PixelBlock' && colorUpper(e.color) === c)
   );
-  // 删炮车
   state.data.initialTanks = state.data.initialTanks.filter(
     t => colorUpper(t.color) !== c
   );
@@ -474,47 +526,51 @@ function normalize() {
     const b = blocks[c] || 0;
     const a = ammo[c]   || 0;
 
-    // blocks=0 且 ammo>0 → 删炮车
-    if (b === 0 && a > 0) {
+    // blocks=0 → 删炮车
+    if (b === 0) {
       state.data.initialTanks = state.data.initialTanks.filter(
         t => colorUpper(t.color) !== c
       );
       continue;
     }
 
-    // 目标：floor10(b)，最低 10
-    const target = b % 10 === 0 ? b : floor10(b) || 10;
+    // 目标：向下取整到10的倍数，最低10
+    const target = b % 10 === 0 ? b : (floor10(b) || 10);
 
     // 删多余方块（从末尾删）
     if (b > target) {
-      const toRemove = b - target;
-      let removed = 0;
-      outer: for (const e of state.data.entities) {
+      let toRemove = b - target;
+      for (const e of state.data.entities) {
         if (e.type !== 'PixelBlock' || colorUpper(e.color) !== c) continue;
-        while (e.cells.length > 0 && removed < toRemove) {
-          e.cells.pop();
-          removed++;
-        }
-        if (removed >= toRemove) break outer;
+        const cut = Math.min(toRemove, e.cells.length);
+        e.cells.splice(e.cells.length - cut, cut);
+        toRemove -= cut;
+        if (toRemove <= 0) break;
       }
     }
 
-    // ammo=0 且 blocks>0 → 加炮车
-    if (a === 0 && target > 0) {
-      const numLanes = state.data.numberOfLanes || 2;
-      const maxPos = Math.max(-1, ...state.data.initialTanks.map(t => t.position));
+    // ammo=0 → 新增炮车（分配到 lane 0）
+    if (a === 0) {
+      const maxPos = Math.max(-1, ...state.data.initialTanks
+        .filter(t => t.lane === 0).map(t => t.position));
       state.data.initialTanks.push(tankTemplate(c, target, 0, maxPos + 1));
       reorderTankPositions();
       continue;
     }
 
-    // 调整现有炮车弹药均匀分配
+    // 均匀分配弹药：base = floor10(target / n)，last 补足差值
+    // 保证 base >= 10，且 last = target - base*(n-1) >= 10
     const tanks = state.data.initialTanks.filter(t => colorUpper(t.color) === c);
-    if (!tanks.length) continue;
-    const n    = tanks.length;
-    const base = Math.max(10, Math.floor(target / n / 10) * 10);
+    const n     = tanks.length;
+    if (!n) continue;
+
+    let base = Math.max(10, Math.floor(target / n / 10) * 10);
+    // base*(n-1) 不能超过 target-10（保证 last >= 10）
+    while (n > 1 && base * (n - 1) > target - 10) base -= 10;
+    if (base < 10) base = 10;
     const last = Math.max(10, target - base * (n - 1));
-    tanks.forEach((t, i) => { t.ammo = i === n - 1 ? last : base; });
+
+    tanks.forEach((t, i) => { t.ammo = (i === n - 1) ? last : base; });
   }
 
   // 清理空实体
@@ -533,17 +589,15 @@ function normalize() {
 async function saveLevel() {
   if (!state.data || !state.currentFile) return;
 
-  // 更新 boardSize 为 max(w, h) 保持兼容
   state.data.boardSize = Math.max(state.data.boardWidth, state.data.boardHeight);
 
-  // 校验
   const blocks = countBlocks(state.data);
   const ammo   = countAmmo(state.data);
   const colors = new Set([...Object.keys(blocks), ...Object.keys(ammo)]);
   const errors = [];
   for (const c of colors) {
     const b = blocks[c] || 0, a = ammo[c] || 0;
-    if (b !== a) errors.push(`${c}: 块${b}≠弹${a}`);
+    if (b !== a)        errors.push(`${c}: 块${b}≠弹${a}`);
     else if (b % 10 !== 0) errors.push(`${c}: ${b}不是10的倍数`);
   }
   if (errors.length) {
@@ -557,17 +611,18 @@ async function saveLevel() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename: state.currentFile, data: state.data }),
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (json.ok) showSaveMsg('已保存 ✓', 'ok');
     else         showSaveMsg('保存失败：' + json.error, 'err');
   } catch (e) {
-    showSaveMsg('保存失败（需要 Vite dev server）', 'err');
+    showSaveMsg(`保存失败：${e.message}`, 'err');
   }
 }
 
 function showSaveMsg(msg, type = '') {
   elSaveMsg.textContent = msg;
-  elSaveMsg.className = type;
+  elSaveMsg.className   = type;
 }
 
 function setStatus(msg) {
@@ -581,18 +636,18 @@ function applyGridSize(w, h) {
   w = clamp(parseInt(w) || 20, 4, 80);
   h = clamp(parseInt(h) || 20, 4, 80);
 
-  const oldH = state.data.boardHeight;
-
-  // 若 boardHeight 缩小，删掉越界方块
-  if (h < oldH) {
-    for (const e of state.data.entities) {
-      if (e.type !== 'PixelBlock') continue;
-      e.cells = e.cells.filter(c => {
-        const row = (h - 1) - c.y;
-        return c.x >= 0 && c.x < w && row >= 0 && row < h;
-      });
-    }
+  // 删掉宽度或高度缩小后越界的方块（原来只处理高度缩小）
+  for (const e of state.data.entities) {
+    if (e.type !== 'PixelBlock') continue;
+    e.cells = e.cells.filter(c => {
+      const row = (h - 1) - c.y;
+      return c.x >= 0 && c.x < w && row >= 0 && row < h;
+    });
   }
+
+  // ── 障碍元素越界裁剪扩展点 ───────────────────────────────────────────────
+  // 新增障碍类型时在此同步裁剪 obstacles 实体，逻辑与 PixelBlock 相同。
+  // ────────────────────────────────────────────────────────────────────────
 
   state.data.boardWidth  = w;
   state.data.boardHeight = h;
@@ -606,10 +661,9 @@ function applyGridSize(w, h) {
 
 // ── 事件绑定 ──────────────────────────────────────────────────────────────────
 
-// 画布鼠标事件
 elCanvas.addEventListener('mousedown', e => {
   if (!state.data) return;
-  state.painting = true;
+  state.painting  = true;
   state.paintMode = e.button === 2 ? 'erase' : (state.brushColor ? 'draw' : 'erase');
   const { col, row } = canvasColRow(e);
   paintCell(col, row);
@@ -620,26 +674,21 @@ elCanvas.addEventListener('mousemove', e => {
   updateInfo(col, row);
   if (state.painting) paintCell(col, row);
 });
-elCanvas.addEventListener('mouseup', () => { state.painting = false; });
+elCanvas.addEventListener('mouseup',    () => { state.painting = false; });
 elCanvas.addEventListener('mouseleave', () => { state.painting = false; });
 elCanvas.addEventListener('contextmenu', e => e.preventDefault());
 
-// 工具栏缩放
 elTbZoom.addEventListener('change', () => {
-  state.zoom = clamp(parseInt(elTbZoom.value) || 16, 4, 32);
+  state.zoom     = clamp(parseInt(elTbZoom.value) || 16, 4, 32);
   elTbZoom.value = state.zoom;
   renderCanvas();
 });
 
-// 工具栏宽高
-elTbWidth.addEventListener('change',  () => applyGridSize(elTbWidth.value, elTbHeight.value));
-elTbHeight.addEventListener('change', () => applyGridSize(elTbWidth.value, elTbHeight.value));
+elTbWidth.addEventListener('change',  () => applyGridSize(elTbWidth.value,  elTbHeight.value));
+elTbHeight.addEventListener('change', () => applyGridSize(elTbWidth.value,  elTbHeight.value));
+elPropW.addEventListener('change',    () => applyGridSize(elPropW.value,     elPropH.value));
+elPropH.addEventListener('change',    () => applyGridSize(elPropW.value,     elPropH.value));
 
-// 属性面板宽高
-elPropW.addEventListener('change', () => applyGridSize(elPropW.value, elPropH.value));
-elPropH.addEventListener('change', () => applyGridSize(elPropW.value, elPropH.value));
-
-// 队列数变更
 elPropLanes.addEventListener('change', () => {
   if (!state.data) return;
   state.data.numberOfLanes = clamp(parseInt(elPropLanes.value) || 2, 1, 8);
@@ -647,23 +696,23 @@ elPropLanes.addEventListener('change', () => {
   renderColorRows();
 });
 
-// 添加颜色
 elAddColor.addEventListener('click', () => {
   if (!state.data) return;
   addColor(elNewColor.value);
 });
 
-// 对齐 + 保存
 elBtnNorm.addEventListener('click', normalize);
 elBtnSave.addEventListener('click', saveLevel);
 
-// 快捷键
 document.addEventListener('keydown', e => {
   if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     saveLevel();
   }
-  if (e.key === 'e') { state.brushColor = null; renderBrushPalette(); }
+  if (e.key === 'e' && !e.ctrlKey && !e.metaKey) {
+    state.brushColor = null;
+    renderBrushPalette();
+  }
 });
 
 // ── 启动 ──────────────────────────────────────────────────────────────────────
