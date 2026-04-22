@@ -124,6 +124,10 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
       <label style="margin-top:8px">相似色合并阈值 <span class="val-display" id="val-thresh">25</span></label>
       <input type="range" id="rng-thresh" min="0" max="100" value="25">
     </div>
+    <div id="fixed-color-controls" style="display:none">
+      <label>颜色数 <span class="val-display" id="val-fixed-colors">6</span></label>
+      <input type="range" id="rng-fixed-colors" min="2" max="34" value="6">
+    </div>
     <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
   </div>
 
@@ -726,9 +730,15 @@ const dynamicColorControls = document.getElementById('dynamic-color-controls');
   }
 })();
 
+const fixedColorControls = document.getElementById('fixed-color-controls');
+const rngFixedColors = document.getElementById('rng-fixed-colors');
+const valFixedColors = document.getElementById('val-fixed-colors');
+rngFixedColors.oninput = ()=>{ valFixedColors.textContent = rngFixedColors.value; if(srcImage) scheduleProcess(); };
+
 chkFixedPalette.onchange = ()=>{
   const on = chkFixedPalette.checked;
   dynamicColorControls.style.display  = on ? 'none' : '';
+  fixedColorControls.style.display    = on ? '' : 'none';
   fixedPalettePreview.style.display   = on ? 'flex' : 'none';
   if(srcImage) scheduleProcess();
 };
@@ -1769,9 +1779,28 @@ function runProcess(){
     let colorHexList, colorLabList;
 
     if(useFixed){
-      // 固定色板：直接用预定义 34 色，跳过 Median Cut
-      colorHexList = [...FIXED_PALETTE_HEX];
-      colorLabList = [...FIXED_PALETTE_LAB];
+      // 固定色板：对每个格子做最近邻匹配，统计各色覆盖像素数，取前 K 种
+      const K = parseInt(rngFixedColors.value);
+      const pixelCount = new Array(FIXED_PALETTE_HEX.length).fill(0);
+      const N = GW * GH;
+      for(let i = 0; i < N; i++){
+        if(pixels[i*4+3] < 128) continue; // 透明像素跳过
+        const lab = rgbToLab(pixels[i*4], pixels[i*4+1], pixels[i*4+2]);
+        let best = Infinity, bi = 0;
+        for(let ci = 0; ci < FIXED_PALETTE_LAB.length; ci++){
+          const d = deltaE(lab, FIXED_PALETTE_LAB[ci]);
+          if(d < best){ best = d; bi = ci; }
+        }
+        pixelCount[bi]++;
+      }
+      // 按覆盖数降序，取前 K 个有像素的颜色
+      const ranked = pixelCount
+        .map((cnt, ci) => ({ ci, cnt }))
+        .filter(e => e.cnt > 0)
+        .sort((a, b) => b.cnt - a.cnt)
+        .slice(0, K);
+      colorHexList = ranked.map(e => FIXED_PALETTE_HEX[e.ci]);
+      colorLabList = ranked.map(e => FIXED_PALETTE_LAB[e.ci]);
       setProgress(65);
     } else {
       // 动态：Median Cut 量化 → 相似色合并
