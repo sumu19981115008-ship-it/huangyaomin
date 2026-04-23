@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-23（编辑器多选删除、固定35色板、加权 deltaE）
+> 每次新开发前阅读本文档。最后更新：2026-04-23（重新生成炮车序列功能）
 
 ---
 
@@ -328,6 +328,7 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 | `POST /api/save-level-c2` | 保存到 levels_c2/ |
 | `POST /api/delete-levels-c2` | 批量删除 levels_c2/ 中的关卡 |
 | `POST /api/generate-level` | 图片→关卡 JSON（调用 level_generator.py，支持 `fixedPalette` 参数） |
+| `POST /api/regen-queue` | 仅重新生成炮车序列，保持画布不变（body: `{ levelData, difficulty, lanes, slot }`） |
 | `GET /api/level-list` | 旧接口，指向 levels/（保留兼容） |
 | `POST /api/save-level` | 旧接口，保存到 levels/（保留兼容） |
 
@@ -355,6 +356,10 @@ state = {
 
 列表底部「多选删除」按钮进入多选模式，列表项显示 checkbox，点击整行勾选。勾选后出现「删除所选关卡」按钮，点击弹出二次确认框，确认后调用 `/api/delete-levels-{组}` 批量删除。若当前打开的关卡被删除，编辑器自动清空。切换组时自动退出多选模式。
 
+### 重新生成炮车序列
+
+save-bar「重新生成炮车序列…」按钮，针对已有关卡仅重跑炮车队列生成，**画布像素完全不变**。弹窗预填当前关卡的难度/轨道数/槽位数，可修改后提交。调用 `/api/regen-queue`，后端执行 `level_generator.regen_queue()`（内部仍走整十对齐 + 难度参数调度），返回更新后的完整 levelData，编辑器立即刷新颜色/炮车面板并标注「未保存」。
+
 ---
 
 ## 十二、关卡自动生成器（tools/level_generator.py）
@@ -370,6 +375,14 @@ python3 tools/level_generator.py <图片> <输出JSON> \
   --slot N         # 槽位数（默认5）
   --fixed-palette  # 使用固定35色板（Lab最近邻，与pixel-tool.html一致）
 ```
+
+### Python API（供后端调用）
+
+| 函数 | 说明 |
+|------|------|
+| `quantize_image(img_path, bw, bh, n_colors, use_fixed_palette)` | 图片量化，返回 `(pixels, color_table)` |
+| `generate_queue_group(pixels, color_table, n_lanes, params, rng)` | 生成炮车队列，内含整十对齐，返回 `(lanes, pixels)` |
+| `regen_queue(level_data, difficulty, n_lanes, slot, seed)` | 仅重新生成炮车序列，保持 PixelImageData 不变，原地修改并返回 level_data |
 
 ### 生成流程
 
