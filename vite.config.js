@@ -112,6 +112,34 @@ export default defineConfig({
           });
         });
 
+        // POST /api/delete-levels-{a2/b2/c2}（批量删除关卡）
+        const makeDeleteHandler = (dir) => (req, res) => {
+          if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
+          let body = '';
+          req.on('data', c => { body += c; });
+          req.on('end', () => {
+            try {
+              const { filenames } = JSON.parse(body);
+              if (!Array.isArray(filenames) || filenames.length === 0) {
+                res.statusCode = 400; res.end(JSON.stringify({ error: '无效文件名列表' })); return;
+              }
+              const deleted = [];
+              for (const filename of filenames) {
+                if (!/^level\d+\.json$/.test(filename)) continue;
+                const fp = path.resolve(__dirname, dir, filename);
+                if (fs.existsSync(fp)) { fs.unlinkSync(fp); deleted.push(filename); }
+              }
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true, deleted }));
+            } catch (e) {
+              res.statusCode = 500; res.end(JSON.stringify({ error: e.message }));
+            }
+          });
+        };
+        server.middlewares.use('/api/delete-levels-a2', makeDeleteHandler('levels_a2'));
+        server.middlewares.use('/api/delete-levels-b2', makeDeleteHandler('levels_b2'));
+        server.middlewares.use('/api/delete-levels-c2', makeDeleteHandler('levels_c2'));
+
         // POST /api/generate-level（图片 → 关卡 JSON）
         // body: { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette }
         server.middlewares.use('/api/generate-level', (req, res) => {

@@ -67,9 +67,53 @@
       color: #889;
       transition: background 0.1s;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
     .level-item:hover { background: #1a1a35; color: #aab; }
     .level-item.active { background: #1e1e45; color: #aaccff; }
+    .level-item.selected { background: #2a1a1a; color: #ffaaaa; }
+    .level-item input[type=checkbox] {
+      display: none;
+      accent-color: #cc4444;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    #panel-levels.select-mode .level-item input[type=checkbox] { display: inline-block; }
+    #btn-delete-mode {
+      width: 100%; margin-top: 6px; padding: 5px;
+      background: #1a0a0a; color: #cc6666; border: 1px solid #442222;
+      cursor: pointer; font-size: 12px; border-radius: 3px;
+    }
+    #btn-delete-mode:hover { background: #2a1010; }
+    #btn-delete-mode.active { background: #3a1010; color: #ff8888; border-color: #aa3333; }
+    #btn-delete-confirm {
+      display: none;
+      width: 100%; margin-top: 4px; padding: 5px;
+      background: #cc2222; color: #fff; border: none;
+      cursor: pointer; font-size: 12px; border-radius: 3px; font-weight: bold;
+    }
+    #btn-delete-confirm:hover { background: #ee2222; }
+    #delete-count { font-size: 11px; color: #aa6666; margin-top: 4px; text-align: center; display: none; }
+    /* 确认弹窗 */
+    #delete-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    #delete-modal.show { display: flex; }
+    #delete-modal-box {
+      background: #1a1a2e; border: 1px solid #aa3333; border-radius: 8px;
+      padding: 24px 28px; min-width: 260px; text-align: center;
+    }
+    #delete-modal-box p { color: #ffcccc; margin: 0 0 16px; font-size: 14px; }
+    #delete-modal-box .modal-btns { display: flex; gap: 10px; justify-content: center; }
+    #delete-modal-box .modal-btns button { padding: 6px 20px; border-radius: 4px; cursor: pointer; font-size: 13px; border: none; }
+    #btn-modal-cancel { background: #334; color: #aaa; }
+    #btn-modal-cancel:hover { background: #445; }
+    #btn-modal-ok { background: #cc2222; color: #fff; font-weight: bold; }
+    #btn-modal-ok:hover { background: #ee2222; }
 
     /* ── 中间画布区 ───────────────────────────── */
     #panel-canvas {
@@ -389,6 +433,20 @@
     <button id="btn-group-c" class="btn-group active">C 组</button>
   </div>
   <div id="level-list"></div>
+  <button id="btn-delete-mode">多选删除</button>
+  <div id="delete-count"></div>
+  <button id="btn-delete-confirm">删除所选关卡</button>
+</div>
+
+<!-- 删除确认弹窗 -->
+<div id="delete-modal">
+  <div id="delete-modal-box">
+    <p id="delete-modal-msg">确认删除这些关卡？此操作不可撤销。</p>
+    <div class="modal-btns">
+      <button id="btn-modal-cancel">取消</button>
+      <button id="btn-modal-ok">确认删除</button>
+    </div>
+  </div>
 </div>
 
 <!-- 中：画布 -->

@@ -20,7 +20,14 @@ const state = {
 
 // ── DOM 引用 ──────────────────────────────────────────────────────────────────
 
-const elLevelList   = document.getElementById('level-list');
+const elLevelList       = document.getElementById('level-list');
+const elBtnDeleteMode   = document.getElementById('btn-delete-mode');
+const elBtnDeleteConfirm= document.getElementById('btn-delete-confirm');
+const elDeleteCount     = document.getElementById('delete-count');
+const elDeleteModal     = document.getElementById('delete-modal');
+const elDeleteModalMsg  = document.getElementById('delete-modal-msg');
+const elBtnModalCancel  = document.getElementById('btn-modal-cancel');
+const elBtnModalOk      = document.getElementById('btn-modal-ok');
 const elCanvas      = document.getElementById('main-canvas');
 const elTbWidth     = document.getElementById('tb-width');
 const elTbHeight    = document.getElementById('tb-height');
@@ -128,10 +135,31 @@ async function loadLevelList() {
   for (const fname of state.levels) {
     const num = fname.replace('level', '').replace('.json', '');
     const div = document.createElement('div');
-    div.className   = 'level-item';
-    div.textContent = `Level ${num}`;
+    div.className    = 'level-item';
     div.dataset.file = fname;
-    div.addEventListener('click', () => openLevel(fname));
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.addEventListener('click', e => {
+      e.stopPropagation();
+      div.classList.toggle('selected', chk.checked);
+      updateDeleteCount();
+    });
+
+    const label = document.createElement('span');
+    label.textContent = `Level ${num}`;
+
+    div.appendChild(chk);
+    div.appendChild(label);
+    div.addEventListener('click', () => {
+      if (deleteSelectMode) {
+        chk.checked = !chk.checked;
+        div.classList.toggle('selected', chk.checked);
+        updateDeleteCount();
+      } else {
+        openLevel(fname);
+      }
+    });
     elLevelList.appendChild(div);
   }
 }
@@ -761,8 +789,87 @@ elAddColor.addEventListener('click', () => {
   addColor(elNewColor.value);
 });
 
+// ── 多选删除 ──────────────────────────────────────────────────────────────────
+
+let deleteSelectMode = false;
+
+function apiDeleteUrl() {
+  if (state.group === 'b') return '/api/delete-levels-b2';
+  if (state.group === 'c') return '/api/delete-levels-c2';
+  return '/api/delete-levels-a2';
+}
+
+function updateDeleteCount() {
+  const n = document.querySelectorAll('.level-item input[type=checkbox]:checked').length;
+  elDeleteCount.style.display   = deleteSelectMode ? 'block' : 'none';
+  elDeleteCount.textContent     = `已选 ${n} 个关卡`;
+  elBtnDeleteConfirm.style.display = (deleteSelectMode && n > 0) ? 'block' : 'none';
+}
+
+function exitDeleteMode() {
+  deleteSelectMode = false;
+  document.getElementById('panel-levels').classList.remove('select-mode');
+  document.querySelectorAll('.level-item').forEach(el => {
+    el.classList.remove('selected');
+    el.querySelector('input[type=checkbox]').checked = false;
+  });
+  elBtnDeleteMode.classList.remove('active');
+  elBtnDeleteMode.textContent = '多选删除';
+  updateDeleteCount();
+}
+
+elBtnDeleteMode.addEventListener('click', () => {
+  deleteSelectMode = !deleteSelectMode;
+  document.getElementById('panel-levels').classList.toggle('select-mode', deleteSelectMode);
+  elBtnDeleteMode.classList.toggle('active', deleteSelectMode);
+  elBtnDeleteMode.textContent = deleteSelectMode ? '退出多选' : '多选删除';
+  if (!deleteSelectMode) exitDeleteMode();
+  else updateDeleteCount();
+});
+
+elBtnDeleteConfirm.addEventListener('click', () => {
+  const selected = [...document.querySelectorAll('.level-item input[type=checkbox]:checked')]
+    .map(chk => chk.closest('.level-item').dataset.file);
+  if (selected.length === 0) return;
+  elDeleteModalMsg.textContent = `确认删除 ${selected.length} 个关卡？此操作不可撤销。`;
+  elDeleteModal.classList.add('show');
+});
+
+elBtnModalCancel.addEventListener('click', () => {
+  elDeleteModal.classList.remove('show');
+});
+
+elBtnModalOk.addEventListener('click', async () => {
+  elDeleteModal.classList.remove('show');
+  const selected = [...document.querySelectorAll('.level-item input[type=checkbox]:checked')]
+    .map(chk => chk.closest('.level-item').dataset.file);
+  try {
+    const res = await fetch(apiDeleteUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filenames: selected }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+    // 若当前打开的关卡被删除，清空编辑器
+    if (selected.includes(state.currentFile)) {
+      state.currentFile = null;
+      state.data = null;
+      renderCanvas();
+      renderBrushPalette();
+      renderColorRows();
+    }
+    exitDeleteMode();
+    await loadLevelList();
+    setStatus(`已删除 ${selected.length} 个关卡`);
+  } catch (e) {
+    setStatus(`删除失败：${e.message}`);
+  }
+});
+
 function switchGroup(g) {
   if (state.group === g) return;
+  exitDeleteMode();
   state.group       = g;
   state.currentFile = null;
   state.data        = null;
