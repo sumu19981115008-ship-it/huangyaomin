@@ -361,12 +361,13 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
     # 前段颜色数（至少1种，最多留1种给后段）
     n_warm     = max(1, min(n_colors - 1, round(n_colors * warm_ratio)))
 
-    # 全部颜色按 mdir 排序
-    all_sorted = sorted(avg_depth.keys(), key=lambda m: avg_depth[m], reverse=(mdir >= 0))
-    # 前段：浅色先（爽感，不论 mdir），后段：按 mdir 原始顺序
+    # 浅→深顺序（爽感前段和 easy/medium 后段都用这个）
     easy_order = sorted(avg_depth.keys(), key=lambda m: avg_depth[m], reverse=False)
+    # 后段顺序：mdir>0 深色先（逆序，Hard/VeryHard），否则浅色先
+    hard_order = sorted(avg_depth.keys(), key=lambda m: avg_depth[m], reverse=(mdir > 0))
     warm_mats  = easy_order[:n_warm]
-    hard_mats  = [m for m in all_sorted if m not in set(warm_mats)]
+    warm_set   = set(warm_mats)
+    hard_mats  = [m for m in hard_order if m not in warm_set]
     sorted_mats = warm_mats + hard_mats
 
     # lane_pending[li] = [(material, ammo), ...]，同色连续
