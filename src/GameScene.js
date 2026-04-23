@@ -50,7 +50,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   init(data) {
-    this.levelIndex = data?.levelIndex ?? 0;
+    this.levelIndex   = data?.levelIndex ?? 0;
+    this._totalLevelsC = 0;
+    // 查询 C 组实际文件数，避免预加载不存在的文件
+    return fetch('/api/level-list-c2')
+      .then(r => r.json())
+      .then(list => { this._totalLevelsC = Array.isArray(list) ? list.length : 0; })
+      .catch(() => { this._totalLevelsC = 0; });
   }
 
   preload() {
@@ -60,7 +66,7 @@ export class GameScene extends Phaser.Scene {
     for (let i = 1; i <= TOTAL_LEVELS_B; i++) {
       this.load.json(`level_b${i}`, `/levels_b2/level${i}.json`);
     }
-    for (let i = 1; i <= TOTAL_LEVELS_C; i++) {
+    for (let i = 1; i <= this._totalLevelsC; i++) {
       this.load.json(`level_c${i}`, `/levels_c2/level${i}.json`);
     }
   }
@@ -87,7 +93,7 @@ export class GameScene extends Phaser.Scene {
       if (d) this.levelsB.push(d);
     }
     this.levelsC = [];
-    for (let i = 1; i <= TOTAL_LEVELS_C; i++) {
+    for (let i = 1; i <= this._totalLevelsC; i++) {
       const d = this.cache.json.get(`level_c${i}`);
       if (d) this.levelsC.push(d);
     }
