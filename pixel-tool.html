@@ -114,7 +114,7 @@ canvas{image-rendering:pixelated;border:1px solid #2a2a50}
     <div style="margin-bottom:10px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="chk-fixed-palette" style="width:auto;accent-color:#cc5500">
-        <span style="color:#ffaa66;font-weight:bold">固定色板模式（34色）</span>
+        <span style="color:#ffaa66;font-weight:bold">固定色板模式（35色）</span>
       </label>
       <div id="fixed-palette-preview" style="display:none;margin-top:6px;flex-wrap:wrap;gap:2px"></div>
     </div>
@@ -737,7 +737,7 @@ function outlineModeBg(cells, GW, GH, lThresh, keepOutline){
 }
 
 // ════════════════════════════════════════════════
-// 固定色板（34色）
+// 固定色板（35色）
 // ════════════════════════════════════════════════
 
 const FIXED_PALETTE_HEX = [
@@ -747,7 +747,7 @@ const FIXED_PALETTE_HEX = [
   "#8FBC8F","#FA8072","#E6E6FA","#CC4E36","#F5DEB3",
   "#CB4154","#808080","#404040","#4B0082","#FF007F",
   "#FFB6C1","#FFAA5C","#800020","#6B8E23","#5F9EA0",
-  "#C4A265","#8B6914","#9D00FF","#6E7F80",
+  "#C4A265","#8B6914","#9D00FF","#6E7F80","#FFFACD",
 ];
 const FIXED_PALETTE_LAB = FIXED_PALETTE_HEX.map(h => rgbToLab(...hexToRgb(h)));
 
