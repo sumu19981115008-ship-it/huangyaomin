@@ -244,8 +244,28 @@ export class GameLogic {
       }
       if (t.lapComplete && t.activeShotCount === 0) {
         this._handleLapComplete(t);
+        return;
       }
     }
+
+    // 某色方块刚被消完时，剔除轨道上同色且无飞行子弹的无用炮车
+    this._pruneUselessTurrets();
+  }
+
+  // 颜色已从棋盘消失且无飞行子弹（activeShotCount=0）的轨道炮车，直接废弃释放槽位
+  _pruneUselessTurrets() {
+    const aliveColors = new Set(this.blocks.map(b => b.color));
+    const toRemove = [];
+    for (const t of this.turrets) {
+      if (aliveColors.has(t.color)) continue;
+      if (t.activeShotCount > 0) continue; // 还有子弹在途，等落地再剪
+      toRemove.push(t);
+    }
+    for (const t of toRemove) {
+      const idx = this.turrets.indexOf(t);
+      if (idx !== -1) this.turrets.splice(idx, 1);
+    }
+    if (toRemove.length > 0) this._checkEndgame();
   }
 
   flushPendingBullets() {
