@@ -99,7 +99,11 @@ def _rgb_to_lab(r, g, b):
     return L, a, b_
 
 def _delta_e(lab1, lab2):
-    return sum((a-b)**2 for a,b in zip(lab1, lab2)) ** 0.5
+    # 降低亮度权重，提高色相权重，避免有彩色像素因亮度接近而匹配到近白/近灰色
+    dl = lab1[0] - lab2[0]
+    da = lab1[1] - lab2[1]
+    db = lab1[2] - lab2[2]
+    return (0.5*dl**2 + 2.0*da**2 + 2.0*db**2) ** 0.5
 
 FIXED_PALETTE_LAB = [_rgb_to_lab(*_hex_to_rgb(h)) for h in FIXED_PALETTE_HEX]
 
