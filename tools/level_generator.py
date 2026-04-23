@@ -1,14 +1,16 @@
 """
 FixelFlow 2 关卡自动生成器
 用法：python level_generator.py <图片路径> <输出JSON路径> [选项]
-  --lanes N        轨道数（默认3）
-  --difficulty D   easy / medium / hard / veryhard（默认medium）
-  --colors N       颜色数量（默认自动，最多8）
-  --board W H      网格尺寸（默认20 20）
-  --slot N         槽位数（默认5）
+  --lanes N          轨道数（默认3）
+  --difficulty D     easy / medium / hard / veryhard（默认medium）
+  --colors N         颜色数量（默认自动，最多8）
+  --board W H        网格尺寸（默认20 20）
+  --slot N           槽位数（默认5）
+  --fixed-palette    使用固定34色板（Lab最近邻匹配，与pixel-tool.html一致）
 
 生成逻辑综述
   1. 图片量化为 N 色，映射到 W×H 网格
+     （--fixed-palette 模式：每格 Lab 最近邻匹配到固定34色，取前 N 种）
   2. BFS 计算各色暴露深度
   3. 按难度参数决定：炮车数、每辆弹药粒度、队列分配、时序错配方向
   4. 输出 levels2 JSON
@@ -63,16 +65,90 @@ DIFFICULTY_PARAMS = {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 固定色板（34色，与 pixel-tool.html 保持完全一致）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FIXED_PALETTE_HEX = [
+    "#4169E1","#00008B","#222222","#228B22","#FF8C00",
+    "#FF69B4","#8B008B","#CC0000","#00CED1","#FFD700",
+    "#F5F5F5","#8B4513","#006400","#50C878","#C8A2C8",
+    "#8FBC8F","#FA8072","#E6E6FA","#CC4E36","#F5DEB3",
+    "#CB4154","#808080","#404040","#4B0082","#FF007F",
+    "#FFB6C1","#FFAA5C","#800020","#6B8E23","#5F9EA0",
+    "#C4A265","#8B6914","#9D00FF","#6E7F80",
+]
+
+def _hex_to_rgb(h):
+    h = h.lstrip('#')
+    return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+
+def _rgb_to_lab(r, g, b):
+    """sRGB → CIE Lab（D65）"""
+    def f(v):
+        v /= 255.0
+        return v/12.92 if v <= 0.04045 else ((v+0.055)/1.055)**2.4
+    rx, gx, bx = f(r), f(g), f(b)
+    X = rx*0.4124564 + gx*0.3575761 + bx*0.1804375
+    Y = rx*0.2126729 + gx*0.7151522 + bx*0.0721750
+    Z = rx*0.0193339 + gx*0.1191920 + bx*0.9503041
+    X /= 0.95047; Z /= 1.08883
+    def fc(t): return t**(1/3) if t > 0.008856 else 7.787*t + 16/116
+    L = 116*fc(Y) - 16
+    a = 500*(fc(X) - fc(Y))
+    b_ = 200*(fc(Y) - fc(Z))
+    return L, a, b_
+
+def _delta_e(lab1, lab2):
+    return sum((a-b)**2 for a,b in zip(lab1, lab2)) ** 0.5
+
+FIXED_PALETTE_LAB = [_rgb_to_lab(*_hex_to_rgb(h)) for h in FIXED_PALETTE_HEX]
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 图片量化
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def quantize_image(img_path, board_w, board_h, n_colors):
+def quantize_image(img_path, board_w, board_h, n_colors, use_fixed_palette=False):
     img = Image.open(img_path).convert('RGB')
     img = img.resize((board_w, board_h), Image.LANCZOS)
-    arr = np.array(img).reshape(-1, 3).astype(float)
+    arr = np.array(img).reshape(-1, 3)
 
+    if use_fixed_palette:
+        # 每格 Lab 最近邻匹配到固定34色，取覆盖最多的前 n_colors 种
+        pixel_count = [0] * len(FIXED_PALETTE_HEX)
+        assignments = []
+        for rgb in arr:
+            lab = _rgb_to_lab(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+            best_i = min(range(len(FIXED_PALETTE_LAB)),
+                         key=lambda i: _delta_e(lab, FIXED_PALETTE_LAB[i]))
+            assignments.append(best_i)
+            pixel_count[best_i] += 1
+
+        # 按覆盖数降序，取前 n_colors 个有像素的颜色
+        ranked = sorted(
+            [i for i in range(len(FIXED_PALETTE_HEX)) if pixel_count[i] > 0],
+            key=lambda i: pixel_count[i], reverse=True
+        )[:n_colors]
+        # 将34色索引重映射为 0~(n_colors-1) 的 material id
+        idx_to_mat = {fp_i: mat for mat, fp_i in enumerate(ranked)}
+        # 不在 top-N 的格子改色为最近邻的 top-N 颜色
+        top_labs = [FIXED_PALETTE_LAB[i] for i in ranked]
+        pixels = []
+        for pos, fp_i in enumerate(assignments):
+            if fp_i in idx_to_mat:
+                mat = idx_to_mat[fp_i]
+            else:
+                lab = _rgb_to_lab(int(arr[pos][0]), int(arr[pos][1]), int(arr[pos][2]))
+                mat = min(range(len(top_labs)), key=lambda i: _delta_e(lab, top_labs[i]))
+            x = pos % board_w
+            y = pos // board_w
+            pixels.append({'x': x, 'y': y, 'material': mat})
+        color_table = [FIXED_PALETTE_HEX[i] for i in ranked]
+        return pixels, color_table
+
+    # 动态 KMeans 量化
+    arr_f = arr.astype(float)
     km = KMeans(n_clusters=n_colors, random_state=42, n_init=10)
-    labels = km.fit_predict(arr)
+    labels = km.fit_predict(arr_f)
     centers = km.cluster_centers_.astype(int)
 
     pixels = []
@@ -327,12 +403,13 @@ def main():
     parser = argparse.ArgumentParser(description='FixelFlow 2 关卡自动生成器')
     parser.add_argument('image',       help='输入图片路径')
     parser.add_argument('output',      help='输出 JSON 路径')
-    parser.add_argument('--lanes',      type=int,   default=3,        help='轨道数（默认3）')
-    parser.add_argument('--difficulty', type=str,   default='medium', help='easy/medium/hard/veryhard')
-    parser.add_argument('--colors',     type=int,   default=0,        help='颜色数（0=自动）')
-    parser.add_argument('--board',      type=int,   nargs=2,          default=[20, 20], metavar=('W','H'))
-    parser.add_argument('--slot',       type=int,   default=5,        help='槽位数（默认5）')
-    parser.add_argument('--seed',       type=int,   default=42)
+    parser.add_argument('--lanes',          type=int,   default=3,        help='轨道数（默认3）')
+    parser.add_argument('--difficulty',     type=str,   default='medium', help='easy/medium/hard/veryhard')
+    parser.add_argument('--colors',         type=int,   default=0,        help='颜色数（0=自动）')
+    parser.add_argument('--board',          type=int,   nargs=2,          default=[20, 20], metavar=('W','H'))
+    parser.add_argument('--slot',           type=int,   default=5,        help='槽位数（默认5）')
+    parser.add_argument('--seed',           type=int,   default=42)
+    parser.add_argument('--fixed-palette',  action='store_true',          help='使用固定34色板（Lab最近邻，与pixel-tool一致）')
     args = parser.parse_args()
 
     diff_key = args.difficulty.lower().replace(' ', '')
@@ -350,11 +427,12 @@ def main():
     else:
         n_colors = max(2, min(12, args.colors))
 
+    use_fixed = args.fixed_palette
     print(f"图片：{args.image}")
-    print(f"网格：{board_w}×{board_h}，颜色：{n_colors}，轨道：{args.lanes}，难度：{diff_key}")
+    print(f"网格：{board_w}×{board_h}，颜色：{n_colors}，轨道：{args.lanes}，难度：{diff_key}{'，固定色板' if use_fixed else ''}")
 
     # 1. 图片量化
-    pixels, color_table = quantize_image(args.image, board_w, board_h, n_colors)
+    pixels, color_table = quantize_image(args.image, board_w, board_h, n_colors, use_fixed_palette=use_fixed)
     print(f"量化完成：{len(pixels)} 像素，{len(color_table)} 色")
 
     # 2. 生成炮车队列（pixels 在内部做了整十对齐，需要接收返回值）

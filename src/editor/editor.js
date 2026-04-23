@@ -799,11 +799,12 @@ const elGenDrop      = document.getElementById('gen-drop');
 const elGenFileInput = document.getElementById('gen-file-input');
 const elGenPreview   = document.getElementById('gen-preview');
 const elGenFilename  = document.getElementById('gen-filename');
-const elGenDifficulty= document.getElementById('gen-difficulty');
-const elGenLanes     = document.getElementById('gen-lanes');
-const elGenColors    = document.getElementById('gen-colors');
-const elGenSlot      = document.getElementById('gen-slot');
-const elGenBw        = document.getElementById('gen-bw');
+const elGenDifficulty    = document.getElementById('gen-difficulty');
+const elGenLanes         = document.getElementById('gen-lanes');
+const elGenColors        = document.getElementById('gen-colors');
+const elGenSlot          = document.getElementById('gen-slot');
+const elGenBw            = document.getElementById('gen-bw');
+const elGenFixedPalette  = document.getElementById('gen-fixed-palette');
 const elGenBh        = document.getElementById('gen-bh');
 const elGenLog       = document.getElementById('gen-log');
 const elGenSubmit    = document.getElementById('gen-submit');
@@ -875,12 +876,13 @@ elGenSubmit.addEventListener('click', async () => {
         group:       state.group,
         filename:    fname,
         imageBase64: genImageBase64,
-        difficulty:  elGenDifficulty.value,
-        lanes:       parseInt(elGenLanes.value)   || 3,
-        colors:      parseInt(elGenColors.value)  || 0,
-        boardW:      parseInt(elGenBw.value)       || 20,
-        boardH:      parseInt(elGenBh.value)       || 20,
-        slot:        parseInt(elGenSlot.value)     || 5,
+        difficulty:    elGenDifficulty.value,
+        lanes:         parseInt(elGenLanes.value)  || 3,
+        colors:        parseInt(elGenColors.value) || 0,
+        boardW:        parseInt(elGenBw.value)      || 20,
+        boardH:        parseInt(elGenBh.value)      || 20,
+        slot:          parseInt(elGenSlot.value)    || 5,
+        fixedPalette:  elGenFixedPalette.checked,
       }),
     });
     const json = await res.json();

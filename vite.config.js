@@ -113,14 +113,14 @@ export default defineConfig({
         });
 
         // POST /api/generate-level（图片 → 关卡 JSON）
-        // body: { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot }
+        // body: { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette }
         server.middlewares.use('/api/generate-level', (req, res) => {
           if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
           let body = '';
           req.on('data', c => { body += c; });
           req.on('end', () => {
             try {
-              const { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot } = JSON.parse(body);
+              const { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette } = JSON.parse(body);
 
               if (!filename || !/^level\d+\.json$/.test(filename)) {
                 res.statusCode = 400; res.end(JSON.stringify({ error: '非法文件名' })); return;
@@ -140,14 +140,16 @@ export default defineConfig({
               const outFile = path.resolve(outDir, filename);
               const script  = path.resolve(__dirname, 'tools', 'level_generator.py');
 
-              const result = spawnSync('python3', [
+              const pyArgs = [
                 script, tmpImg, outFile,
                 '--difficulty', difficulty || 'medium',
                 '--lanes',      String(lanes  || 3),
                 '--colors',     String(colors || 0),
                 '--board',      String(boardW || 20), String(boardH || 20),
                 '--slot',       String(slot   || 5),
-              ], { encoding: 'utf-8', timeout: 30000 });
+              ];
+              if (fixedPalette) pyArgs.push('--fixed-palette');
+              const result = spawnSync('python3', pyArgs, { encoding: 'utf-8', timeout: 30000 });
 
               fs.unlinkSync(tmpImg);
 
