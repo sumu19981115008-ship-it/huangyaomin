@@ -350,8 +350,24 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
     pref_pack = params['pref_pack']
 
     # ── 第一步：为每条 lane 生成待放炮车列表（按颜色分配）─────────────────────
-    # 对颜色按暴露深度排序，mdir 决定时序错配方向
-    sorted_mats = sorted(avg_depth.keys(), key=lambda m: avg_depth[m], reverse=(mdir >= 0))
+    # 预估总炮车数（用于计算爽感前段比例）
+    est_total_tanks = sum(
+        len(make_ammo_list(mat_px.get(m, 0), tmax, pref_pack))
+        for m in avg_depth if mat_px.get(m, 0) > 0
+    )
+    # 关卡越短（炮车越少）前段比例越大：[5辆→40%, 30辆以上→25%]，线性插值
+    warm_ratio = max(0.25, min(0.40, 0.40 - (est_total_tanks - 5) * (0.15 / 25)))
+    n_colors   = len([m for m in avg_depth if mat_px.get(m, 0) > 0])
+    # 前段颜色数（至少1种，最多留1种给后段）
+    n_warm     = max(1, min(n_colors - 1, round(n_colors * warm_ratio)))
+
+    # 全部颜色按 mdir 排序
+    all_sorted = sorted(avg_depth.keys(), key=lambda m: avg_depth[m], reverse=(mdir >= 0))
+    # 前段：浅色先（爽感，不论 mdir），后段：按 mdir 原始顺序
+    easy_order = sorted(avg_depth.keys(), key=lambda m: avg_depth[m], reverse=False)
+    warm_mats  = easy_order[:n_warm]
+    hard_mats  = [m for m in all_sorted if m not in set(warm_mats)]
+    sorted_mats = warm_mats + hard_mats
 
     # lane_pending[li] = [(material, ammo), ...]，同色连续
     n_spread_global = max(1, min(n_lanes, round(spread * n_lanes))) if spread > 0 else 1
