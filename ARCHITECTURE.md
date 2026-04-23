@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-23（像素整十对齐改为纯改色策略）
+> 每次新开发前阅读本文档。最后更新：2026-04-23（编辑器多选删除、固定35色板、加权 deltaE）
 
 ---
 
@@ -320,11 +320,14 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 |------|------|
 | `GET /api/level-list-a2` | 获取 levels_a2/ 文件名列表 |
 | `POST /api/save-level-a2` | 保存到 levels_a2/ |
+| `POST /api/delete-levels-a2` | 批量删除 levels_a2/ 中的关卡（body: `{ filenames: [] }`） |
 | `GET /api/level-list-b2` | 获取 levels_b2/ 文件名列表 |
 | `POST /api/save-level-b2` | 保存到 levels_b2/ |
+| `POST /api/delete-levels-b2` | 批量删除 levels_b2/ 中的关卡 |
 | `GET /api/level-list-c2` | 获取 levels_c2/ 文件名列表 |
 | `POST /api/save-level-c2` | 保存到 levels_c2/ |
-| `POST /api/generate-level` | 图片→关卡 JSON（调用 level_generator.py） |
+| `POST /api/delete-levels-c2` | 批量删除 levels_c2/ 中的关卡 |
+| `POST /api/generate-level` | 图片→关卡 JSON（调用 level_generator.py，支持 `fixedPalette` 参数） |
 | `GET /api/level-list` | 旧接口，指向 levels/（保留兼容） |
 | `POST /api/save-level` | 旧接口，保存到 levels/（保留兼容） |
 
@@ -348,6 +351,10 @@ state = {
 }
 ```
 
+### 多选删除
+
+列表底部「多选删除」按钮进入多选模式，列表项显示 checkbox，点击整行勾选。勾选后出现「删除所选关卡」按钮，点击弹出二次确认框，确认后调用 `/api/delete-levels-{组}` 批量删除。若当前打开的关卡被删除，编辑器自动清空。切换组时自动退出多选模式。
+
 ---
 
 ## 十二、关卡自动生成器（tools/level_generator.py）
@@ -361,12 +368,13 @@ python3 tools/level_generator.py <图片> <输出JSON> \
   --colors N       # 颜色数（0=按难度自动：easy=4, medium=6, hard=7, veryhard=8）
   --board W H      # 网格尺寸（默认20 20）
   --slot N         # 槽位数（默认5）
+  --fixed-palette  # 使用固定35色板（Lab最近邻，与pixel-tool.html一致）
 ```
 
 ### 生成流程
 
 ```
-1. 图片量化（KMeans）→ N 色像素网格
+1. 图片量化（KMeans 或 --fixed-palette 固定35色最近邻匹配）→ N 色像素网格
 2. BFS 计算各色平均暴露深度（外层=浅，内层=深）
 3. 按难度参数决定时序错配方向（Easy顺序/Hard反向）
 4. make_ammo_list() 用标准包（10/20/40）拆分每色炮车
@@ -433,6 +441,14 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 5. 生成关卡 JSON → 保存到 levels_a2/
 
 **网格评分**：`combo = cellPurity×0.6 + edge×0.2 + rle×0.2`
+
+### 固定35色板模式
+
+勾选「固定色板模式（35色）」后，跳过 KMeans，改用 Lab 最近邻匹配到固定35色，取覆盖最多的前 K 种颜色输出。与 `level_generator.py --fixed-palette` 使用完全相同的色板和匹配算法。
+
+**颜色匹配算法**：加权 CIE76，降低亮度权重（L×0.5），提高色相权重（a×2、b×2），避免有彩色像素因亮度接近匹配到近白/近灰色。
+
+**注意**：固定色板适合色彩鲜明的图（卡通、像素画、logo），对柔和渐变图（如照片）颜色还原度有限。上传的 PNG 若有透明边缘，PIL 会将透明区域填充为白色参与量化，建议使用无透明区域的图片。
 
 ---
 
