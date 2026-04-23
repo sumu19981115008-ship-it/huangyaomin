@@ -10,6 +10,7 @@ import {
   C_BG,
   TOTAL_LEVELS,
   TOTAL_LEVELS_B,
+  TOTAL_LEVELS_C,
 } from './constants.js';
 
 export class GameScene extends Phaser.Scene {
@@ -24,7 +25,8 @@ export class GameScene extends Phaser.Scene {
     this.levelIndex = 0;
     this.levels     = [];
     this.levelsB    = [];
-    this.group      = 'A';   // 当前关卡组 'A' | 'B'
+    this.levelsC    = [];
+    this.group      = 'A';   // 当前关卡组 'A' | 'B' | 'C'
     this.g          = null;
     this.overlayG   = null;
     this._lastState = null;
@@ -56,6 +58,9 @@ export class GameScene extends Phaser.Scene {
     for (let i = 1; i <= TOTAL_LEVELS_B; i++) {
       this.load.json(`level_b${i}`, `/levels_b2/level${i}.json`);
     }
+    for (let i = 1; i <= TOTAL_LEVELS_C; i++) {
+      this.load.json(`level_c${i}`, `/levels_c2/level${i}.json`);
+    }
   }
 
   create() {
@@ -79,7 +84,21 @@ export class GameScene extends Phaser.Scene {
       const d = this.cache.json.get(`level_b${i}`);
       if (d) this.levelsB.push(d);
     }
-    // levels_a2 / levels_b2 均为统一的 levels2 格式（含 colorTable + QueueGroup）
+    this.levelsC = [];
+    for (let i = 1; i <= TOTAL_LEVELS_C; i++) {
+      const d = this.cache.json.get(`level_c${i}`);
+      if (d) this.levelsC.push(d);
+    }
+    // 支持试玩模式：编辑器通过 sessionStorage 注入单关数据
+    const previewData = sessionStorage.getItem('editorPreview');
+    if (previewData) {
+      try {
+        this.levelsC.unshift(JSON.parse(previewData));
+        this.group = 'C';
+        this.levelIndex = 0;
+      } catch (_) {}
+      sessionStorage.removeItem('editorPreview');
+    }
 
     this._createTexts();
     this.items.create();
@@ -110,13 +129,18 @@ export class GameScene extends Phaser.Scene {
   // ── 关卡管理 ──────────────────────────────────────────────────
 
   _currentLevels() {
-    return this.group === 'B' ? this.levelsB : this.levels;
+    if (this.group === 'B') return this.levelsB;
+    if (this.group === 'C') return this.levelsC;
+    return this.levels;
   }
 
   _switchGroup() {
-    this.group = this.group === 'A' ? 'B' : 'A';
+    if (this.group === 'A')      this.group = 'B';
+    else if (this.group === 'B') this.group = 'C';
+    else                         this.group = 'A';
     this.levelIndex = 0;
-    this.txGroupBtn.setText(this.group === 'A' ? '切换 B 组' : '切换 A 组');
+    const labels = { A: '切换 B 组', B: '切换 C 组', C: '切换 A 组' };
+    this.txGroupBtn.setText(labels[this.group]);
     this.devTools?.setTotalLevels(this._currentLevels().length);
     this._loadCurrentLevel();
   }
@@ -129,7 +153,8 @@ export class GameScene extends Phaser.Scene {
     this._lastState = 'playing';
     this._endgameDeployDone = false;
     this.items.reset();
-    this.txLevel.setText(`${this.group === 'B' ? '[B]' : ''} Level ${this.levelIndex + 1}`);
+    const prefix = this.group === 'A' ? '' : `[${this.group}] `;
+    this.txLevel.setText(`${prefix}Level ${this.levelIndex + 1}`);
     this._hideOverlay();
     this._updateLabels();
     this.devTools?.sync(this.levelIndex);

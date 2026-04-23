@@ -27,13 +27,33 @@
       overflow: hidden;
     }
     #panel-levels h2 {
-      padding: 10px 8px 8px;
+      padding: 10px 8px 6px;
       font-size: 11px;
       color: #667;
       letter-spacing: 1px;
+      flex-shrink: 0;
+    }
+    #group-switch {
+      display: flex;
+      gap: 4px;
+      padding: 6px 8px;
       border-bottom: 1px solid #1a1a30;
       flex-shrink: 0;
     }
+    .btn-group {
+      flex: 1;
+      background: #111120;
+      border: 1px solid #334;
+      color: #556;
+      padding: 3px 0;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: monospace;
+      transition: background 0.1s;
+    }
+    .btn-group:hover { background: #1a1a35; color: #889; }
+    .btn-group.active { background: #1e1e45; border-color: #446; color: #aaccff; }
     #level-list {
       overflow-y: auto;
       flex: 1;
@@ -253,11 +273,102 @@
       cursor: pointer; font-size: 11px; font-family: monospace;
     }
     #btn-normalize:hover { background: #223344; }
+    #btn-save-as {
+      background: #1a1a35; border: 1px solid #334;
+      color: #8899bb; padding: 5px; border-radius: 4px;
+      cursor: pointer; font-size: 11px; font-family: monospace;
+    }
+    #btn-save-as:hover { background: #222250; }
     #save-msg {
       font-size: 11px; text-align: center; min-height: 14px;
     }
     #save-msg.ok   { color: #44aa66; }
     #save-msg.err  { color: #cc4444; }
+
+    /* 生成按钮 */
+    #btn-generate {
+      background: #1a2a1a; border: 1px solid #2a5a2a;
+      color: #88cc88; padding: 5px; border-radius: 4px;
+      cursor: pointer; font-size: 11px; font-family: monospace;
+      margin-bottom: 2px;
+    }
+    #btn-generate:hover { background: #223322; }
+    #btn-preview {
+      background: #1a1a3a; border: 1px solid #334488;
+      color: #88aaff; padding: 5px; border-radius: 4px;
+      cursor: pointer; font-size: 11px; font-family: monospace;
+      margin-bottom: 2px;
+    }
+    #btn-preview:hover { background: #222255; }
+
+    /* 生成弹窗遮罩 */
+    #gen-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #gen-modal.open { display: flex; }
+    #gen-box {
+      background: #111120;
+      border: 1px solid #334;
+      border-radius: 6px;
+      padding: 18px 20px;
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 12px;
+    }
+    #gen-box h3 { font-size: 13px; color: #aaccff; margin-bottom: 2px; }
+    #gen-box label { color: #667; display: block; margin-bottom: 3px; }
+    #gen-box input[type=number], #gen-box select {
+      width: 100%; background: #0d0d1a; border: 1px solid #334;
+      color: #aab; padding: 4px 6px; border-radius: 3px;
+      font-size: 12px; font-family: monospace;
+    }
+    #gen-box input[type=text] {
+      width: 100%; background: #0d0d1a; border: 1px solid #334;
+      color: #aab; padding: 4px 6px; border-radius: 3px;
+      font-size: 12px; font-family: monospace;
+    }
+    #gen-drop {
+      border: 2px dashed #334; border-radius: 4px;
+      padding: 16px 8px; text-align: center;
+      color: #556; cursor: pointer; transition: border-color 0.15s;
+      font-size: 11px;
+    }
+    #gen-drop.dragover { border-color: #66aaff; color: #aaccff; }
+    #gen-drop.has-img  { border-color: #44aa66; color: #44aa66; }
+    #gen-preview {
+      width: 100%; height: 80px; object-fit: contain;
+      display: none; border-radius: 3px; background: #0d0d1a;
+    }
+    #gen-preview.show { display: block; }
+    .gen-row { display: flex; gap: 8px; }
+    .gen-row > div { flex: 1; }
+    #gen-btn-row { display: flex; gap: 8px; margin-top: 4px; }
+    #gen-submit {
+      flex: 1; background: #1e3a1e; border: 1px solid #2a5a2a;
+      color: #88cc88; padding: 7px; border-radius: 4px;
+      cursor: pointer; font-size: 12px; font-family: monospace;
+    }
+    #gen-submit:hover { background: #254a25; }
+    #gen-submit:disabled { opacity: 0.4; cursor: default; }
+    #gen-cancel {
+      background: #1a1a30; border: 1px solid #334;
+      color: #667; padding: 7px 12px; border-radius: 4px;
+      cursor: pointer; font-size: 12px; font-family: monospace;
+    }
+    #gen-cancel:hover { background: #222240; }
+    #gen-log {
+      font-size: 10px; color: #556; white-space: pre-wrap;
+      max-height: 80px; overflow-y: auto; background: #0a0a18;
+      border-radius: 3px; padding: 4px 6px; display: none;
+    }
+    #gen-log.show { display: block; }
 
     /* 状态栏 */
     #statusbar {
@@ -272,6 +383,11 @@
 <!-- 左：关卡列表 -->
 <div id="panel-levels">
   <h2>关 卡</h2>
+  <div id="group-switch">
+    <button id="btn-group-a" class="btn-group">A 组</button>
+    <button id="btn-group-b" class="btn-group">B 组</button>
+    <button id="btn-group-c" class="btn-group active">C 组</button>
+  </div>
   <div id="level-list"></div>
 </div>
 
@@ -324,13 +440,80 @@
 
   </div>
   <div id="save-bar">
+    <button id="btn-preview">试 玩 当 前 关 卡</button>
+    <button id="btn-generate">从图片生成关卡…</button>
     <button id="btn-normalize">自动对齐（整十取整）</button>
     <button id="btn-save">保 存 关 卡</button>
+    <button id="btn-save-as">另 存 为…</button>
     <div id="save-msg"></div>
   </div>
 </div>
 
 <div id="statusbar">未加载关卡</div>
+
+<!-- 图片生成弹窗 -->
+<div id="gen-modal">
+  <div id="gen-box">
+    <h3>从图片生成关卡</h3>
+
+    <div>
+      <label>拖入图片 / 点击选择</label>
+      <div id="gen-drop">点击或拖拽图片到此处</div>
+      <input type="file" id="gen-file-input" accept="image/*" style="display:none">
+      <img id="gen-preview" alt="预览">
+    </div>
+
+    <div>
+      <label>输出文件名（如 level302）</label>
+      <input type="text" id="gen-filename" placeholder="level302">
+    </div>
+
+    <div class="gen-row">
+      <div>
+        <label>难度</label>
+        <select id="gen-difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+          <option value="veryhard">Very Hard</option>
+        </select>
+      </div>
+      <div>
+        <label>轨道数</label>
+        <input type="number" id="gen-lanes" min="1" max="8" value="3">
+      </div>
+    </div>
+
+    <div class="gen-row">
+      <div>
+        <label>颜色数（0=自动）</label>
+        <input type="number" id="gen-colors" min="0" max="12" value="0">
+      </div>
+      <div>
+        <label>槽位数</label>
+        <input type="number" id="gen-slot" min="3" max="10" value="5">
+      </div>
+    </div>
+
+    <div class="gen-row">
+      <div>
+        <label>网格宽</label>
+        <input type="number" id="gen-bw" min="8" max="40" value="20">
+      </div>
+      <div>
+        <label>网格高</label>
+        <input type="number" id="gen-bh" min="8" max="40" value="20">
+      </div>
+    </div>
+
+    <div id="gen-log"></div>
+
+    <div id="gen-btn-row">
+      <button id="gen-cancel">取消</button>
+      <button id="gen-submit" disabled>生 成</button>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="/src/editor/editor.js"></script>
 </body>

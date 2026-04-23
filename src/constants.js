@@ -43,3 +43,4 @@ export const BUFFER_COLORS = [
 // 可用关卡总数
 export const TOTAL_LEVELS   = 301;
 export const TOTAL_LEVELS_B = 167;
+export const TOTAL_LEVELS_C = 500;  // C 组上限，实际按文件存在数量加载

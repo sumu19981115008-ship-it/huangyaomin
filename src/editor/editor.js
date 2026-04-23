@@ -15,6 +15,7 @@ const state = {
   zoom:        12,
   painting:    false,
   paintMode:   null,   // 'draw' | 'erase'
+  group:       'c',    // 'a' | 'b' | 'c'（默认 C 组，编辑器创作专用）
 };
 
 // ── DOM 引用 ──────────────────────────────────────────────────────────────────
@@ -33,8 +34,13 @@ const elNewColor    = document.getElementById('new-color-input');
 const elAddColor    = document.getElementById('add-color-btn');
 const elColorRows   = document.getElementById('color-rows');
 const elBtnSave     = document.getElementById('btn-save');
+const elBtnSaveAs   = document.getElementById('btn-save-as');
 const elBtnNorm     = document.getElementById('btn-normalize');
 const elSaveMsg     = document.getElementById('save-msg');
+const elBtnGroupA   = document.getElementById('btn-group-a');
+const elBtnGroupB   = document.getElementById('btn-group-b');
+const elBtnGroupC   = document.getElementById('btn-group-c');
+const elBtnPreview  = document.getElementById('btn-preview');
 const elStatusbar   = document.getElementById('statusbar');
 const ctx           = elCanvas.getContext('2d');
 
@@ -93,9 +99,25 @@ function allMaterials() {
 
 // ── 关卡列表 ──────────────────────────────────────────────────────────────────
 
+function apiListUrl()  {
+  if (state.group === 'b') return '/api/level-list-b2';
+  if (state.group === 'c') return '/api/level-list-c2';
+  return '/api/level-list-a2';
+}
+function apiSaveUrl()  {
+  if (state.group === 'b') return '/api/save-level-b2';
+  if (state.group === 'c') return '/api/save-level-c2';
+  return '/api/save-level-a2';
+}
+function levelDirUrl() {
+  if (state.group === 'b') return '/levels_b2';
+  if (state.group === 'c') return '/levels_c2';
+  return '/levels_a2';
+}
+
 async function loadLevelList() {
   try {
-    const res = await fetch('/api/level-list-a2');
+    const res = await fetch(apiListUrl());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.levels = await res.json();
   } catch (e) {
@@ -118,7 +140,7 @@ async function loadLevelList() {
 
 async function openLevel(fname) {
   try {
-    const res = await fetch(`/levels_a2/${fname}`);
+    const res = await fetch(`${levelDirUrl()}/${fname}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
   } catch (e) {
@@ -520,7 +542,7 @@ async function saveLevel() {
   state.data.PixelImageData.height = state.data.boardHeight;
 
   try {
-    const res = await fetch('/api/save-level-a2', {
+    const res = await fetch(apiSaveUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename: state.currentFile, data: state.data }),
@@ -531,6 +553,56 @@ async function saveLevel() {
     else         showSaveMsg('保存失败：' + json.error, 'err');
   } catch (e) {
     showSaveMsg(`保存失败：${e.message}`, 'err');
+  }
+}
+
+async function saveAs() {
+  if (!state.data) return;
+  const input = prompt('另存为文件名（如 level302）：');
+  if (!input) return;
+  const fname = input.trim().replace(/\.json$/i, '') + '.json';
+  if (!/^level\d+\.json$/.test(fname)) {
+    showSaveMsg('文件名格式错误（需为 levelN）', 'err');
+    return;
+  }
+
+  const pxCnt   = countPixels();
+  const ammoCnt = countAmmo();
+  const mats    = new Set([...Object.keys(pxCnt).map(Number), ...Object.keys(ammoCnt).map(Number)]);
+  const errors  = [];
+  for (const mat of mats) {
+    const b = pxCnt[mat] || 0, a = ammoCnt[mat] || 0;
+    if (b !== a) errors.push(`mat${mat}(${matColor(mat)}): 块${b}≠弹${a}`);
+  }
+  if (errors.length) {
+    showSaveMsg('校验失败：' + errors.slice(0, 2).join(' | '), 'err');
+    return;
+  }
+
+  state.data.PixelImageData.width  = state.data.boardWidth;
+  state.data.PixelImageData.height = state.data.boardHeight;
+
+  try {
+    const res = await fetch(apiSaveUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: fname, data: state.data }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.ok) {
+      state.currentFile = fname;
+      showSaveMsg(`已另存为 ${fname}`, 'ok');
+      setStatus(`当前文件：${fname}`);
+      await loadLevelList();
+      document.querySelectorAll('.level-item').forEach(el =>
+        el.classList.toggle('active', el.dataset.file === fname)
+      );
+    } else {
+      showSaveMsg('另存失败：' + json.error, 'err');
+    }
+  } catch (e) {
+    showSaveMsg(`另存失败：${e.message}`, 'err');
   }
 }
 
@@ -624,8 +696,157 @@ elAddColor.addEventListener('click', () => {
   addColor(elNewColor.value);
 });
 
+function switchGroup(g) {
+  if (state.group === g) return;
+  state.group       = g;
+  state.currentFile = null;
+  state.data        = null;
+  elBtnGroupA.classList.toggle('active', g === 'a');
+  elBtnGroupB.classList.toggle('active', g === 'b');
+  elBtnGroupC.classList.toggle('active', g === 'c');
+  renderCanvas();
+  renderBrushPalette();
+  renderColorRows();
+  showSaveMsg('');
+  setStatus(`已切换到 ${g.toUpperCase()} 组`);
+  loadLevelList();
+}
+
+function previewLevel() {
+  if (!state.data) { showSaveMsg('请先加载或生成关卡', 'err'); return; }
+  sessionStorage.setItem('editorPreview', JSON.stringify(state.data));
+  window.open('/', '_blank');
+}
+
+elBtnGroupA.addEventListener('click', () => switchGroup('a'));
+elBtnGroupB.addEventListener('click', () => switchGroup('b'));
+elBtnGroupC.addEventListener('click', () => switchGroup('c'));
+elBtnPreview.addEventListener('click', previewLevel);
 elBtnNorm.addEventListener('click', normalize);
 elBtnSave.addEventListener('click', saveLevel);
+elBtnSaveAs.addEventListener('click', saveAs);
+
+// ── 图片生成弹窗 ──────────────────────────────────────────────────────────────
+
+const elBtnGenerate  = document.getElementById('btn-generate');
+const elGenModal     = document.getElementById('gen-modal');
+const elGenDrop      = document.getElementById('gen-drop');
+const elGenFileInput = document.getElementById('gen-file-input');
+const elGenPreview   = document.getElementById('gen-preview');
+const elGenFilename  = document.getElementById('gen-filename');
+const elGenDifficulty= document.getElementById('gen-difficulty');
+const elGenLanes     = document.getElementById('gen-lanes');
+const elGenColors    = document.getElementById('gen-colors');
+const elGenSlot      = document.getElementById('gen-slot');
+const elGenBw        = document.getElementById('gen-bw');
+const elGenBh        = document.getElementById('gen-bh');
+const elGenLog       = document.getElementById('gen-log');
+const elGenSubmit    = document.getElementById('gen-submit');
+const elGenCancel    = document.getElementById('gen-cancel');
+
+let genImageBase64 = null;
+
+function openGenModal() {
+  // 预填文件名：当前组最大关卡号 + 1
+  const nums = state.levels.map(f => parseInt(f.replace(/\D/g, ''))).filter(Boolean);
+  const next = nums.length ? Math.max(...nums) + 1 : 1;
+  elGenFilename.value = `level${next}`;
+  elGenModal.classList.add('open');
+}
+
+function closeGenModal() {
+  elGenModal.classList.remove('open');
+  elGenLog.classList.remove('show');
+  elGenLog.textContent = '';
+}
+
+function loadGenImage(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    genImageBase64 = e.target.result;
+    elGenPreview.src = genImageBase64;
+    elGenPreview.classList.add('show');
+    elGenDrop.classList.add('has-img');
+    elGenDrop.textContent = file.name;
+    elGenSubmit.disabled = false;
+  };
+  reader.readAsDataURL(file);
+}
+
+elBtnGenerate.addEventListener('click', openGenModal);
+elGenCancel.addEventListener('click', closeGenModal);
+elGenModal.addEventListener('click', e => { if (e.target === elGenModal) closeGenModal(); });
+
+elGenDrop.addEventListener('click', () => elGenFileInput.click());
+elGenFileInput.addEventListener('change', e => { if (e.target.files[0]) loadGenImage(e.target.files[0]); });
+elGenDrop.addEventListener('dragover',  e => { e.preventDefault(); elGenDrop.classList.add('dragover'); });
+elGenDrop.addEventListener('dragleave', () => elGenDrop.classList.remove('dragover'));
+elGenDrop.addEventListener('drop', e => {
+  e.preventDefault();
+  elGenDrop.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadGenImage(e.dataTransfer.files[0]);
+});
+
+elGenSubmit.addEventListener('click', async () => {
+  if (!genImageBase64) return;
+
+  const rawName = elGenFilename.value.trim().replace(/\.json$/i, '');
+  const fname   = rawName + '.json';
+  if (!/^level\d+\.json$/.test(fname)) {
+    elGenLog.textContent = '文件名格式错误（需为 levelN）';
+    elGenLog.classList.add('show');
+    return;
+  }
+
+  elGenSubmit.disabled = true;
+  elGenLog.textContent = '生成中，请稍候…';
+  elGenLog.classList.add('show');
+
+  try {
+    const res = await fetch('/api/generate-level', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        group:       state.group,
+        filename:    fname,
+        imageBase64: genImageBase64,
+        difficulty:  elGenDifficulty.value,
+        lanes:       parseInt(elGenLanes.value)   || 3,
+        colors:      parseInt(elGenColors.value)  || 0,
+        boardW:      parseInt(elGenBw.value)       || 20,
+        boardH:      parseInt(elGenBh.value)       || 20,
+        slot:        parseInt(elGenSlot.value)     || 5,
+      }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+
+    elGenLog.textContent = json.log || '完成';
+    // 把生成的数据直接载入编辑器
+    state.data        = json.data;
+    state.currentFile = fname;
+    await loadLevelList();
+    document.querySelectorAll('.level-item').forEach(el =>
+      el.classList.toggle('active', el.dataset.file === fname)
+    );
+    const lanes = state.data.QueueGroup?.length || 2;
+    elPropLanes.value = lanes;
+    elTbWidth.value   = state.data.boardWidth;
+    elTbHeight.value  = state.data.boardHeight;
+    elPropW.value     = state.data.boardWidth;
+    elPropH.value     = state.data.boardHeight;
+    renderBrushPalette();
+    renderColorRows();
+    renderCanvas();
+    setStatus(`已生成 ${fname}（${elGenDifficulty.value}，${state.data.colorTable.length} 色）`);
+    showSaveMsg('已生成，未保存', 'ok');
+    closeGenModal();
+  } catch (e) {
+    elGenLog.textContent = '错误：' + e.message;
+  } finally {
+    elGenSubmit.disabled = false;
+  }
+});
 
 document.addEventListener('keydown', e => {
   if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
