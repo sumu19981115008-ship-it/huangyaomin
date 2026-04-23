@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-23（轨道推进模式、难度顺序修复）
+> 每次新开发前阅读本文档。最后更新：2026-04-23（AutoBot 自动打关机器人、道具三逻辑层修复、按钮整理）
 
 ---
 
@@ -36,6 +36,7 @@ game2/
     ├── renderer.js     # 所有绘制逻辑 + 坐标工具函数
     ├── bullets.js      # 子弹物理 + 粒子特效
     ├── items.js        # 三个道具的完整逻辑与特效
+    ├── AutoBot.js      # 自动打关机器人（可开关，不影响正常游戏逻辑）
     ├── dev/
     │   └── DevTools.js # 开发用跳关面板（生产环境可关闭）
     ├── editor/
@@ -49,13 +50,14 @@ game2/
 
 ```
 GameScene（调度）
-    ├── GameLogic   ← 纯逻辑，无 Phaser 依赖
-    ├── Renderer    ← 所有 _draw* 方法
-    ├── BulletSystem← 子弹物理 + 粒子
-    └── ItemSystem  ← 道具状态与特效
+    ├── GameLogic    ← 纯逻辑，无 Phaser 依赖
+    ├── Renderer     ← 所有 _draw* 方法
+    ├── BulletSystem ← 子弹物理 + 粒子
+    ├── ItemSystem   ← 道具状态与特效
+    └── AutoBot      ← 自动打关机器人（可关闭）
 ```
 
-**单向依赖规则**：constants → GameLogic；renderer/bullets/items → constants；GameScene 持有其余所有实例。
+**单向依赖规则**：constants → GameLogic；renderer/bullets/items/AutoBot → constants；GameScene 持有其余所有实例。
 
 ---
 
@@ -222,7 +224,8 @@ inFlightTargets  ← Set，飞行中子弹的目标坐标（防重复锁定）
 | `forceDeployFromLane/Buffer/LaneAt()` | 道具二强制部署（忽略 trackCap） |
 | `_findTarget(turret)` | 沿当前边向内扫描，找第一个同色且未锁定的方块 |
 | `_checkEndgame()` | 剩余炮车总数 < bufferCap+1 时触发冲刺 |
-| `_handleLapComplete(t)` | 炮车跑完一圈：有弹药进暂存区（或冲刺继续绕），无弹药移除 |
+| `_handleLapComplete(t)` | 炮车跑完一圈：有弹药进暂存区（或冲刺继续绕），无弹药移除；记录 `idleLastLap` |
+| `clearColor(color)` | 道具三调用：清 grid/blocks/turrets/buffer/lanes，同步清 inFlightTargets，返回被清坐标列表 |
 
 ### 冲刺机制
 
@@ -294,15 +297,45 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 
 ---
 
-## 十、DevTools（dev/DevTools.js）
+## 十、AutoBot（AutoBot.js）
+
+右上角「🤖 自动」按钮开关，开启后自动部署炮车并在过关时自动进入下一关。
+
+### 部署策略
+
+每 120ms 决策一次：
+
+1. **可达性预判**：用 `_reachableColors()` 从四个方向扫描棋盘，找出当前最外层暴露的颜色集合（与 `_findTarget` 扫描逻辑一致）
+2. **候选范围**：buffer 全部炮车 + 每条队列前 3 辆（扩大视野，但只有队首可直接部署）
+3. **空转过滤**：buffer 中 `idleLastLap=true`（上圈转完未命中任何方块）且颜色当前不可达的车，跳过等待，直到颜色被其他车打出来
+4. **排序**：可达 > 棋盘剩余数量降序 > buffer 优先于队列
+5. **间距保护**：每次只部署一辆，且轨道入口 `pathPos < 28` 范围内有车时等待（与 `_checkEndgameDeploy` 的 `SAFE_GAP` 一致）
+
+### ActiveTurret 新增字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `hitsThisLap` | number | 本圈累计击中方块数，`onBulletHit` 时递增 |
+| `idleLastLap` | bool | 上圈转完时 `hitsThisLap===0`，退回 buffer 时记录，`resetForDeploy` 时清除 |
+
+### UI
+
+- 右上角工具栏横排：`[🤖 自动]` `[切换 B 组]`，统一胶囊样式
+- `[DEV]` 按钮移至左下角，不与工具栏冲突
+- 激活状态下按钮变黄色显示 `▶ 自动ON`，关卡切换时保持开关状态
+
+---
+
+## 十一、DevTools（dev/DevTools.js）
 
 - 仅在 `ENABLED=true` 时构建（Vite dev 模式自动启用，或设置 `window.__DEV_TOOLS__=true`）
+- 触发按钮位于**左下角**（`(8, VH-8)`），不与右上角工具栏冲突
 - 面板隐藏时：zones depth 降为 -1，同时启用 depth=102 的遮罩 Zone 吞掉穿透点击
 - **注意**：Phaser `container.setVisible(false)` 不影响 Zone 交互，必须用 depth+遮罩方案
 
 ---
 
-## 十一、关卡分组与编辑器
+## 十二、关卡分组与编辑器
 
 ### 关卡组
 
@@ -373,7 +406,7 @@ CLI 对应参数：`--sync-lanes`（不加则为独立模式）。
 
 ---
 
-## 十二、关卡自动生成器（tools/level_generator.py）
+## 十三、关卡自动生成器（tools/level_generator.py）
 
 ### CLI 用法
 
@@ -441,7 +474,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 
 ---
 
-## 十三、难度算法（tools/difficulty_analysis.py）
+## 十四、难度算法（tools/difficulty_analysis.py）
 
 基于 B 组 167 关的监督回归分析，提取 5 个难度维度：
 
@@ -458,7 +491,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 
 ---
 
-## 十四、像素工具（pixel-tool.html）
+## 十五、像素工具（pixel-tool.html）
 
 单文件工具，将图片转换为 levels2 格式关卡 JSON。核心流程：
 
@@ -480,7 +513,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 
 ---
 
-## 十五、新增障碍元素开发指引
+## 十六、新增障碍元素开发指引
 
 后续开发障碍元素（石头、冰块、锁格等）时，修改以下四处：
 
@@ -491,7 +524,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 
 ---
 
-## 十六、编辑器自动对齐规则（normalize）
+## 十七、编辑器自动对齐规则（normalize）
 
 **原则：画布像素永远不动，只调整炮车弹药。**
 
@@ -505,7 +538,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 
 ---
 
-## 十七、已知问题 / 历史决策
+## 十八、已知问题 / 历史决策
 
 | 问题 | 说明 |
 |------|------|

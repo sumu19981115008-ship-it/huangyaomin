@@ -29,6 +29,8 @@ class ActiveTurret {
     this.activeShotCount   = 0;
     this.shotSlotsThisSide = new Set();
     this.lastSide          = SIDE.BOTTOM;
+    this.hitsThisLap       = 0;   // 本圈击中计数
+    this.idleLastLap       = false; // 上圈转完没打中任何方块
   }
 
   getSide() {
@@ -58,6 +60,8 @@ class ActiveTurret {
     this.activeShotCount   = 0;
     this.shotSlotsThisSide = new Set();
     this.lastSide          = SIDE.BOTTOM;
+    this.hitsThisLap       = 0;
+    this.idleLastLap       = false;
   }
 }
 
@@ -231,6 +235,7 @@ export class GameLogic {
     const t = this.turrets.find(t => t.id === turretId);
     if (t) {
       t.activeShotCount--;
+      t.hitsThisLap++;
       if (t.ammo === 0 && t.activeShotCount === 0) {
         const idx = this.turrets.indexOf(t);
         if (idx !== -1) this.turrets.splice(idx, 1);
@@ -330,6 +335,23 @@ export class GameLogic {
     return null;
   }
 
+  clearColor(color) {
+    const removed = [];
+    for (const b of this.blocks) {
+      if (b.color !== color) continue;
+      this.grid[b.y][b.x] = null;
+      this.inFlightTargets.delete(`${b.x},${b.y}`);
+      removed.push({ x: b.x, y: b.y });
+    }
+    this.blocks  = this.blocks.filter(b => b.color !== color);
+    this.turrets = this.turrets.filter(t => t.color !== color);
+    this.buffer  = this.buffer.filter(t => t.color !== color);
+    for (const lane of this.lanes)
+      lane.splice(0, lane.length, ...lane.filter(t => t.color !== color));
+    this._checkEndgame();
+    return removed;
+  }
+
   _handleLapComplete(t) {
     const { TOTAL_DIST } = G;
     const idx = this.turrets.indexOf(t);
@@ -342,6 +364,8 @@ export class GameLogic {
         t.lapComplete = false;
         t.shotSlotsThisSide = new Set();
         t.lastSide = SIDE.BOTTOM;
+        t.idleLastLap = (t.hitsThisLap === 0);
+        t.hitsThisLap = 0;
         this.turrets.push(t);
         this.speedMult = Math.min(2.4, this.speedMult * 1.2);
         return;
@@ -351,6 +375,8 @@ export class GameLogic {
         this.failReason = 'ON_STAGE_FULL';
         return;
       }
+      t.idleLastLap = (t.hitsThisLap === 0);
+      t.hitsThisLap = 0;
       this.buffer.push(t);
     }
     this._checkEndgame();

@@ -29,13 +29,14 @@ export class DevTools {
 
   _build() {
     const VW = this._scene.scale.width;
+    const VH = this._scene.scale.height;
 
-    // 悬浮触发按钮（右上角）
-    const btn = this._scene.add.text(VW - 8, 8, '[DEV]', {
+    // 触发按钮移到左下角，不与右上角工具栏冲突
+    const btn = this._scene.add.text(8, VH - 8, '[DEV]', {
       fontSize: '11px', fontFamily: 'monospace',
       color: '#ff4444', backgroundColor: '#00000088',
       padding: { x: 4, y: 2 },
-    }).setOrigin(1, 0).setDepth(100).setInteractive({ useHandCursor: true });
+    }).setOrigin(0, 1).setDepth(100).setInteractive({ useHandCursor: true });
 
     btn.on('pointerdown', () => this._toggle());
 

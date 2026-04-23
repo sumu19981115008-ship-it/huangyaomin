@@ -278,6 +278,7 @@ export class ItemSystem {
     const targets = logic.blocks.filter(b => b.color === color);
     if (targets.length === 0) { this._cancelItem3(); return; }
 
+    // 按行分组，用于逐行动画
     const rows = {};
     for (const b of targets) { if (!rows[b.y]) rows[b.y] = []; rows[b.y].push(b); }
     const sortedRows = Object.keys(rows).map(Number).sort((a, b) => b - a);
@@ -285,7 +286,7 @@ export class ItemSystem {
     if (!this._wheelG) this._wheelG = this.scene.add.graphics().setDepth(21);
     const wheelG = this._wheelG;
     const { CANVAS_X, CANVAS_Y, CELL } = G;
-    const offY        = CANVAS_Y + this.canvasOffsetY;
+    const offY         = CANVAS_Y + this.canvasOffsetY;
     const wheelTargetY = offY + G.CH + 30;
     let wheelY        = 920 + 60;
     let wheelProgress = 0;
@@ -293,6 +294,13 @@ export class ItemSystem {
     let rowIdx        = 0;
     let rowTimer      = 0;
     const col         = hexNum(color);
+
+    // 预先按行记录坐标（供动画用），逻辑清除交给 logic.clearColor()
+    const rowCoords = {};
+    for (const b of targets) {
+      if (!rowCoords[b.y]) rowCoords[b.y] = [];
+      rowCoords[b.y].push({ x: b.x, y: b.y });
+    }
 
     const tick = this.scene.time.addEvent({ delay: 16, loop: true, callback: () => {
       wheelG.clear();
@@ -306,10 +314,7 @@ export class ItemSystem {
         rowTimer++;
         if (rowTimer >= 10 && rowIdx < sortedRows.length) {
           const r = sortedRows[rowIdx];
-          for (const b of rows[r]) {
-            logic.grid[b.y][b.x] = null;
-            const idx = logic.blocks.indexOf(b);
-            if (idx !== -1) logic.blocks.splice(idx, 1);
+          for (const b of rowCoords[r] ?? []) {
             const bx = CANVAS_X + b.x * CELL + CELL / 2;
             const by = offY + b.y * CELL + CELL / 2;
             this.scene.bullets.spawnFlash(bx, by);
@@ -318,14 +323,10 @@ export class ItemSystem {
         }
         this._drawWheel(wheelG, 480 / 2, wheelY, col);
         if (rowIdx >= sortedRows.length) {
-          logic.turrets = logic.turrets.filter(t => t.color !== color);
-          logic.buffer  = logic.buffer.filter(t => t.color !== color);
-          for (const lane of logic.lanes) {
-            const filtered = lane.filter(t => t.color !== color);
-            lane.length = 0; filtered.forEach(t => lane.push(t));
-          }
+          // 逻辑层统一清除：grid / blocks / turrets / buffer / lanes / inFlightTargets
+          logic.clearColor(color);
+          // 渲染层清掉飞行中同色子弹（视觉对齐，不影响逻辑）
           this.scene.bullets.vBullets = this.scene.bullets.vBullets.filter(b => b.color !== color);
-          logic._checkEndgame();
           this.scene.time.delayedCall(300, () => { phase = 'fly_out'; wheelProgress = 0; });
         }
 
@@ -340,7 +341,7 @@ export class ItemSystem {
             duration: 300, ease: 'Quad.easeOut',
           });
           this._cancelItem3();
-          if (logic.blocks.length === 0) logic.state = 'win';
+          // 胜负由 GameLogic._checkEndgame() / onBulletHit() 负责，此处不再直接写 state
         }
       }
     }});

@@ -2,6 +2,7 @@ import { GameLogic }   from './GameLogic.js';
 import { Renderer }    from './renderer.js';
 import { BulletSystem } from './bullets.js';
 import { ItemSystem }  from './items.js';
+import { AutoBot }     from './AutoBot.js';
 import { DevTools }    from './dev/DevTools.js';
 import {
   G,
@@ -21,6 +22,7 @@ export class GameScene extends Phaser.Scene {
     this.bullets    = null;
     this.items      = null;
     this.devTools   = null;
+    this.bot        = null;
 
     this.levelIndex = 0;
     this.levels     = [];
@@ -100,6 +102,8 @@ export class GameScene extends Phaser.Scene {
       sessionStorage.removeItem('editorPreview');
     }
 
+    this.bot = new AutoBot(this);
+
     this._createTexts();
     this.items.create();
     this._loadCurrentLevel();
@@ -153,6 +157,7 @@ export class GameScene extends Phaser.Scene {
     this._lastState = 'playing';
     this._endgameDeployDone = false;
     this.items.reset();
+    this.bot?.reset();
     const prefix = this.group === 'A' ? '' : `[${this.group}] `;
     this.txLevel.setText(`${prefix}Level ${this.levelIndex + 1}`);
     this._hideOverlay();
@@ -287,14 +292,34 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 8; i++)
       this.txQueueCounts.push(this.add.text(0, 0, '', style(13, '#9999cc')).setOrigin(0.5).setVisible(false).setDepth(6));
 
-    // A/B 组切换按钮
-    this.txGroupBtn = this.add.text(VW - 8, 10, '切换 B 组', style(13, '#aaddff'))
-      .setOrigin(1, 0)
-      .setDepth(20)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover', () => this.txGroupBtn.setColor('#ffffff'))
-      .on('pointerout',  () => this.txGroupBtn.setColor('#aaddff'))
-      .on('pointerdown', () => this._switchGroup());
+    // ── 右上角工具栏（横排，统一胶囊样式）────────────────────────
+    const _btn = (x, label, color, cb) => {
+      const tx = this.add.text(x, 8, label, {
+        fontSize: '12px', fontFamily: 'monospace', color,
+        backgroundColor: '#00000099',
+        padding: { x: 7, y: 4 },
+      }).setOrigin(1, 0).setDepth(20).setInteractive({ useHandCursor: true });
+      tx.on('pointerover', () => tx.setColor('#ffffff'));
+      tx.on('pointerout',  () => cb('out', tx));
+      tx.on('pointerdown', () => cb('down', tx));
+      return tx;
+    };
+
+    // 切换关卡组按钮（最右）
+    this.txGroupBtn = _btn(VW - 8, '切换 B 组', '#aaddff', (ev) => {
+      if (ev === 'down') this._switchGroup();
+      else this.txGroupBtn.setColor('#aaddff');
+    });
+
+    // 自动打关按钮（切换组左侧，固定偏移 82px）
+    this.txAutoBtn = _btn(VW - 8 - 82, '🤖 自动', '#aaffaa', (ev, tx) => {
+      if (ev === 'down') {
+        const on = this.bot.toggle();
+        tx.setText(on ? '▶ 自动ON' : '🤖 自动').setColor(on ? '#ffdd44' : '#aaffaa');
+      } else {
+        tx.setColor(this.bot?.enabled ? '#ffdd44' : '#aaffaa');
+      }
+    });
   }
 
   _updateLabels() {
