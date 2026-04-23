@@ -400,6 +400,31 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
     return lanes, pixels  # pixels 已经过对齐，调用方需用返回值替换原始 pixels
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 仅重新生成炮车序列（供编辑器 API 调用，不重新量化图片）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def regen_queue(level_data, difficulty, n_lanes, slot, seed=42):
+    """
+    接收完整的 levels2 JSON，只重新生成 QueueGroup，保持 PixelImageData 不变。
+    返回更新后的 level_data（原地修改并返回）。
+    """
+    diff_key = difficulty.lower().replace(' ', '')
+    params   = DIFFICULTY_PARAMS[diff_key]
+    rng      = np.random.default_rng(seed)
+
+    pixels     = list(level_data['PixelImageData']['pixels'])
+    color_table= level_data['colorTable']
+
+    queue_group, pixels = generate_queue_group(pixels, color_table, n_lanes, params, rng)
+
+    level_data['QueueGroup']              = queue_group
+    level_data['PixelImageData']['pixels']= pixels
+    level_data['SlotCount']               = slot
+    level_data['ConveyorLimit']           = slot
+    level_data['Difficulty']              = {'easy':'Easy','medium':'Medium','hard':'Hard','veryhard':'Very Hard'}[diff_key]
+    return level_data
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 主函数
 # ═══════════════════════════════════════════════════════════════════════════════
 

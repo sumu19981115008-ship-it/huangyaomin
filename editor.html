@@ -114,6 +114,31 @@
     #btn-modal-cancel:hover { background: #445; }
     #btn-modal-ok { background: #cc2222; color: #fff; font-weight: bold; }
     #btn-modal-ok:hover { background: #ee2222; }
+    /* 重新生成炮车序列弹窗 */
+    #regen-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    #regen-modal.open { display: flex; }
+    #regen-box {
+      background: #1a1a2e; border: 1px solid #334477; border-radius: 8px;
+      padding: 24px 28px; min-width: 280px;
+    }
+    #regen-box h3 { margin: 0 0 16px; color: #aaccff; font-size: 14px; }
+    #regen-box .regen-row { display: flex; gap: 12px; margin-bottom: 10px; align-items: center; }
+    #regen-box label { color: #778; font-size: 12px; white-space: nowrap; }
+    #regen-box select, #regen-box input[type=number] {
+      background: #111128; color: #aab; border: 1px solid #334; border-radius: 3px;
+      padding: 4px 6px; font-size: 12px; width: 80px;
+    }
+    #regen-log { font-size: 12px; color: #88aacc; margin: 8px 0; min-height: 16px; }
+    #regen-btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+    #regen-btn-row button { padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 12px; border: none; }
+    #btn-regen-cancel { background: #334; color: #aaa; }
+    #btn-regen-cancel:hover { background: #445; }
+    #btn-regen-submit { background: #2255aa; color: #fff; font-weight: bold; }
+    #btn-regen-submit:hover { background: #3366cc; }
 
     /* ── 中间画布区 ───────────────────────────── */
     #panel-canvas {
@@ -438,6 +463,33 @@
   <button id="btn-delete-confirm">删除所选关卡</button>
 </div>
 
+<!-- 重新生成炮车序列弹窗 -->
+<div id="regen-modal">
+  <div id="regen-box">
+    <h3>重新生成炮车序列</h3>
+    <div class="regen-row">
+      <label>难度</label>
+      <select id="regen-difficulty">
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Medium</option>
+        <option value="hard">Hard</option>
+        <option value="veryhard">Very Hard</option>
+      </select>
+    </div>
+    <div class="regen-row">
+      <label>轨道数</label>
+      <input type="number" id="regen-lanes" min="1" max="8" value="3">
+      <label>槽位数</label>
+      <input type="number" id="regen-slot" min="3" max="10" value="5">
+    </div>
+    <div id="regen-log"></div>
+    <div id="regen-btn-row">
+      <button id="btn-regen-cancel">取消</button>
+      <button id="btn-regen-submit">重新生成</button>
+    </div>
+  </div>
+</div>
+
 <!-- 删除确认弹窗 -->
 <div id="delete-modal">
   <div id="delete-modal-box">
@@ -500,6 +552,7 @@
   <div id="save-bar">
     <button id="btn-preview">试 玩 当 前 关 卡</button>
     <button id="btn-generate">从图片生成关卡…</button>
+    <button id="btn-regen-queue">重新生成炮车序列…</button>
     <button id="btn-normalize">自动对齐（整十取整）</button>
     <button id="btn-save">保 存 关 卡</button>
     <button id="btn-save-as">另 存 为…</button>

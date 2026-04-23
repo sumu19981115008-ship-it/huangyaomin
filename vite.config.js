@@ -112,6 +112,38 @@ export default defineConfig({
           });
         });
 
+        // POST /api/regen-queue（仅重新生成炮车序列，不动画布）
+        // body: { levelData, difficulty, lanes, slot, seed? }
+        server.middlewares.use('/api/regen-queue', (req, res) => {
+          if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
+          let body = '';
+          req.on('data', c => { body += c; });
+          req.on('end', () => {
+            try {
+              const { levelData, difficulty, lanes, slot, seed } = JSON.parse(body);
+              const script = path.resolve(__dirname, 'tools', 'level_generator.py');
+              const input  = JSON.stringify(levelData);
+              const result = spawnSync('python3', [
+                '-c',
+                `import sys, json; sys.path.insert(0,'${path.resolve(__dirname,"tools").replace(/\\/g,"/")}'); ` +
+                `from level_generator import regen_queue; ` +
+                `d=json.loads(sys.stdin.read()); ` +
+                `print(json.dumps(regen_queue(d,${JSON.stringify(difficulty||'medium')},${lanes||3},${slot||5},${seed||42})))`,
+              ], { input, encoding: 'utf-8', timeout: 15000 });
+
+              if (result.status !== 0) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: result.stderr || '重新生成失败' }));
+                return;
+              }
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true, data: JSON.parse(result.stdout.trim()) }));
+            } catch (e) {
+              res.statusCode = 500; res.end(JSON.stringify({ error: e.message }));
+            }
+          });
+        });
+
         // POST /api/delete-levels-{a2/b2/c2}（批量删除关卡）
         const makeDeleteHandler = (dir) => (req, res) => {
           if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }

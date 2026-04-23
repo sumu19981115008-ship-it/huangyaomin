@@ -1033,6 +1033,61 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ── 重新生成炮车序列弹窗 ──────────────────────────────────────────────────────
+
+const elBtnRegenQueue   = document.getElementById('btn-regen-queue');
+const elRegenModal      = document.getElementById('regen-modal');
+const elRegenDifficulty = document.getElementById('regen-difficulty');
+const elRegenLanes      = document.getElementById('regen-lanes');
+const elRegenSlot       = document.getElementById('regen-slot');
+const elRegenLog        = document.getElementById('regen-log');
+const elBtnRegenCancel  = document.getElementById('btn-regen-cancel');
+const elBtnRegenSubmit  = document.getElementById('btn-regen-submit');
+
+elBtnRegenQueue.addEventListener('click', () => {
+  if (!state.data) { showSaveMsg('请先加载关卡', 'err'); return; }
+  // 用当前关卡的难度和轨道数预填
+  elRegenDifficulty.value = (state.data.Difficulty || 'medium').toLowerCase().replace(' ', '');
+  elRegenLanes.value      = state.data.QueueGroup?.length || 3;
+  elRegenSlot.value       = state.data.SlotCount || 5;
+  elRegenLog.textContent  = '';
+  elRegenModal.classList.add('open');
+});
+
+elBtnRegenCancel.addEventListener('click', () => elRegenModal.classList.remove('open'));
+elRegenModal.addEventListener('click', e => { if (e.target === elRegenModal) elRegenModal.classList.remove('open'); });
+
+elBtnRegenSubmit.addEventListener('click', async () => {
+  if (!state.data) return;
+  elBtnRegenSubmit.disabled = true;
+  elRegenLog.textContent = '生成中…';
+  try {
+    const res = await fetch('/api/regen-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        levelData:  state.data,
+        difficulty: elRegenDifficulty.value,
+        lanes:      parseInt(elRegenLanes.value) || 3,
+        slot:       parseInt(elRegenSlot.value)  || 5,
+      }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+    state.data = json.data;
+    elPropLanes.value = state.data.QueueGroup?.length || 3;
+    renderColorRows();
+    renderCanvas();
+    elRegenLog.textContent = '完成';
+    setStatus(`炮车序列已重新生成（${elRegenDifficulty.value}，${state.data.QueueGroup.length} 轨道）`);
+    showSaveMsg('序列已更新，未保存', 'ok');
+  } catch (e) {
+    elRegenLog.textContent = '错误：' + e.message;
+  } finally {
+    elBtnRegenSubmit.disabled = false;
+  }
+});
+
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 
 loadLevelList();
