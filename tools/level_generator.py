@@ -121,12 +121,15 @@ def bfs_exposure_depth(pixels, bw, bh):
 def _align_counts_to_ten(pixels, bw, bh, rng):
     """
     让每种颜色的像素数成为 10 的倍数。
-    策略：每色余数 r = count % 10；
-      - r == 0：不动
-      - r <= 5：删掉该色 BFS 最浅（最外层）的 r 个像素（向下取整）
-      - r >  5：把该色 BFS 最浅的 (10-r) 个"相邻空位"像素改色（向上取整）
-                若棋盘全满无空位，则改为删掉 r 个（fallback 到向下取整）
-    允许总像素数微变（最多每色 ±5 个），弹药将严格等于调整后的像素数。
+
+    棋盘全满（总像素 = bw*bh，必然是 10 的倍数），因此各色余数之和 ≡ 0 (mod 10)，
+    "多出的"和"不足的"可以精确抵消。策略是纯改色，不增删任何像素：
+
+    1. 计算每色余数 r_i = count_i % 10
+    2. D = Σr_i，恰好需要 D/10 个颜色向上取整（其余向下取整）
+    3. 优先让余数大（r_i 靠近 9）的颜色向上取整，改动量最小
+    4. 向下取整的颜色贡献出 BFS 最外层的像素（donors）
+    5. 每个 donor 优先改色给相邻的向上取整颜色，无相邻时给需求最大的颜色
     """
     from collections import defaultdict
 
@@ -134,49 +137,61 @@ def _align_counts_to_ten(pixels, bw, bh, rng):
     for p in pixels:
         counts[p['material']] += 1
 
-    nonzero = {m: v % 10 for m, v in counts.items() if v % 10 != 0}
-    if not nonzero:
+    remainders = {m: counts[m] % 10 for m in counts if counts[m] % 10 != 0}
+    if not remainders:
         return pixels
 
-    depth_map = bfs_exposure_depth(pixels, bw, bh)
-    occupied  = {(p['x'], p['y']) for p in pixels}
+    D = sum(remainders.values())
+    assert D % 10 == 0, f"余数之和 {D} 不是 10 的倍数，棋盘尺寸非整十？"
+    need_up_count = D // 10
 
-    px_by_mat = defaultdict(list)
-    for p in pixels:
-        px_by_mat[p['material']].append(p)
-    for m in px_by_mat:
-        px_by_mat[m].sort(key=lambda p: depth_map.get((p['x'], p['y']), 0))
+    # 余数大的优先向上取整（cost = 10-r 更小，改动像素更少）
+    sorted_colors = sorted(remainders.keys(), key=lambda m: remainders[m], reverse=True)
+    round_up   = set(sorted_colors[:need_up_count])
+    round_down = set(sorted_colors[need_up_count:])
 
-    to_remove = set()  # pixel id（用 id() 标识）
+    # 各色需要接收（正）或贡献（负）的像素数
+    quota = {}
+    for m in round_up:
+        quota[m] = 10 - remainders[m]
+    for m in round_down:
+        quota[m] = -remainders[m]
 
-    for m, r in nonzero.items():
-        if r <= 5:
-            # 向下取整：删最外层 r 个像素
-            for px in px_by_mat[m][:r]:
-                to_remove.add(id(px))
-                occupied.discard((px['x'], px['y']))
+    depth_map    = bfs_exposure_depth(pixels, bw, bh)
+    coord_to_px  = {(p['x'], p['y']): p for p in pixels}
+
+    # 收集 donor 像素（BFS 最外层优先），按深度升序排列
+    donors = []
+    for m in round_down:
+        n = -quota[m]
+        candidates = [p for p in pixels if p['material'] == m]
+        candidates.sort(key=lambda p: depth_map.get((p['x'], p['y']), 0))
+        donors.extend(candidates[:n])
+    donors.sort(key=lambda p: depth_map.get((p['x'], p['y']), 0))
+
+    dirs = [(0,1),(1,0),(0,-1),(-1,0)]
+    remaining = {m: quota[m] for m in round_up}  # 还需要多少像素
+
+    for donor in donors:
+        # 优先选相邻且有需求的 round_up 颜色
+        adj_up = set()
+        for dx, dy in dirs:
+            nb = coord_to_px.get((donor['x'] + dx, donor['y'] + dy))
+            if nb and nb['material'] in remaining:
+                adj_up.add(nb['material'])
+
+        if adj_up:
+            target = max(adj_up, key=lambda m: remaining[m])
         else:
-            # 向上取整：补 (10-r) 个像素（改色为 m 的相邻空位）
-            need = 10 - r
-            added = 0
-            dirs = [(0,1),(1,0),(0,-1),(-1,0),(1,1),(-1,1),(1,-1),(-1,-1)]
-            for px in px_by_mat[m]:
-                if added >= need:
-                    break
-                for dx, dy in dirs:
-                    nx, ny = px['x'] + dx, px['y'] + dy
-                    if 0 <= nx < bw and 0 <= ny < bh and (nx, ny) not in occupied:
-                        pixels.append({'x': nx, 'y': ny, 'material': m})
-                        occupied.add((nx, ny))
-                        added += 1
-                        if added >= need:
-                            break
-            if added < need:
-                # 棋盘全满，fallback：删掉 r 个像素
-                for px in px_by_mat[m][:r]:
-                    to_remove.add(id(px))
+            if not remaining:
+                break
+            target = max(remaining, key=lambda m: remaining[m])
 
-    pixels = [p for p in pixels if id(p) not in to_remove]
+        donor['material'] = target
+        remaining[target] -= 1
+        if remaining[target] == 0:
+            del remaining[target]
+
     return pixels
 
 # ═══════════════════════════════════════════════════════════════════════════════
