@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-23（重新生成炮车序列功能）
+> 每次新开发前阅读本文档。最后更新：2026-04-23（轨道推进模式、难度顺序修复）
 
 ---
 
@@ -360,6 +360,17 @@ state = {
 
 save-bar「重新生成炮车序列…」按钮，针对已有关卡仅重跑炮车队列生成，**画布像素完全不变**。弹窗预填当前关卡的难度/轨道数/槽位数，可修改后提交。调用 `/api/regen-queue`，后端执行 `level_generator.regen_queue()`（内部仍走整十对齐 + 难度参数调度），返回更新后的完整 levelData，编辑器立即刷新颜色/炮车面板并标注「未保存」。
 
+### 轨道推进模式
+
+图片生成弹窗和重新生成炮车序列弹窗均提供「轨道推进模式」单选：
+
+| 模式 | 说明 |
+|------|------|
+| 独立模式（默认） | 每条轨道内部各自按浅→深顺序，玩家可自由选择先消哪条 |
+| 同步模式 | 所有轨道按颜色批次齐头并进，三条队列同一阶段只出同批颜色的炮车 |
+
+CLI 对应参数：`--sync-lanes`（不加则为独立模式）。
+
 ---
 
 ## 十二、关卡自动生成器（tools/level_generator.py）
@@ -374,6 +385,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
   --board W H      # 网格尺寸（默认20 20）
   --slot N         # 槽位数（默认5）
   --fixed-palette  # 使用固定35色板（Lab最近邻，与pixel-tool.html一致）
+  --sync-lanes     # 同步推进模式（所有轨道按颜色批次齐头并进）
 ```
 
 ### Python API（供后端调用）
@@ -381,34 +393,37 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 | 函数 | 说明 |
 |------|------|
 | `quantize_image(img_path, bw, bh, n_colors, use_fixed_palette)` | 图片量化，返回 `(pixels, color_table)` |
-| `generate_queue_group(pixels, color_table, n_lanes, params, rng)` | 生成炮车队列，内含整十对齐，返回 `(lanes, pixels)` |
-| `regen_queue(level_data, difficulty, n_lanes, slot, seed)` | 仅重新生成炮车序列，保持 PixelImageData 不变，原地修改并返回 level_data |
+| `generate_queue_group(pixels, color_table, n_lanes, params, rng, sync_lanes)` | 生成炮车队列，内含整十对齐，返回 `(lanes, pixels)` |
+| `regen_queue(level_data, difficulty, n_lanes, slot, seed, sync_lanes)` | 仅重新生成炮车序列，保持 PixelImageData 不变，原地修改并返回 level_data |
 
 ### 生成流程
 
 ```
 1. 图片量化（KMeans 或 --fixed-palette 固定35色最近邻匹配）→ N 色像素网格
 2. BFS 计算各色平均暴露深度（外层=浅，内层=深）
-3. 按难度参数决定时序错配方向（Easy顺序/Hard反向）
-4. make_ammo_list() 用标准包（10/20/40）拆分每色炮车
-5. interleave() 对每条 lane 内颜色交错打散，避免同色连片
-6. 输出 levels2 格式 JSON
+3. 爽感前段：关卡前 25%~40% 的颜色按浅→深顺序排（比例随关卡长度动态调整）
+4. 难点后段：Easy/Medium 继续浅→深，Hard/VeryHard 深→浅（逆序错配）
+5. make_ammo_list() 用标准包（10/20/40）拆分每色炮车
+6. 独立模式：各 lane 内相邻颜色局部交错；同步模式：所有 lane 按颜色批次齐推
+7. 输出 levels2 格式 JSON
 ```
 
 ### 难度参数对照
 
-| 难度 | 时序方向 | 优先弹药包 | 最大辆/色 | 分散度 |
-|------|---------|-----------|----------|--------|
-| Easy | 顺序（浅→深） | 40 发 | 3 | 0.2 |
-| Medium | 中性 | 20 发 | 5 | 0.5 |
-| Hard | 反向（深→浅） | 20 发 | 8 | 0.8 |
-| Very Hard | 反向 | 10 发 | 15 | 1.0 |
+| 难度 | 后段时序方向 | 优先弹药包 | 最大辆/色 | 分散度 |
+|------|------------|-----------|----------|--------|
+| Easy | 浅→深（顺序） | 40 发 | 3 | 0.2 |
+| Medium | 浅→深（顺序） | 20 发 | 5 | 0.5 |
+| Hard | 深→浅（逆序） | 20 发 | 8 | 0.8 |
+| Very Hard | 深→浅（逆序） | 10 发 | 15 | 1.0 |
+
+> **注**：原 Medium 的 `mismatch_dir=0` 被 `reverse=(mdir>=0)` 误判为逆序，已修复为 `reverse=(mdir>0)`，Medium 现在和 Easy 一样走顺序。
 
 ### 弹药约束
 
 - 每辆炮车弹药值 ∈ {10, 20, 30, 40}（复刻竞品规范）
 - 各色弹药总量 **严格等于** 该色像素数（像素数保证是 10 的倍数，见下）
-- 同色炮车在队列内交错打散（`interleave` 轮转算法）
+- 颜色大组顺序严格保持，相邻两色之间做局部交错（原全局 round-robin 已废弃）
 
 ### 像素整十对齐（`_align_counts_to_ten`）
 
