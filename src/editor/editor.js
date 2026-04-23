@@ -912,6 +912,7 @@ const elGenColors        = document.getElementById('gen-colors');
 const elGenSlot          = document.getElementById('gen-slot');
 const elGenBw            = document.getElementById('gen-bw');
 const elGenFixedPalette  = document.getElementById('gen-fixed-palette');
+const elGenSyncSynced    = document.getElementById('gen-sync-synced');
 const elGenBh        = document.getElementById('gen-bh');
 const elGenLog       = document.getElementById('gen-log');
 const elGenSubmit    = document.getElementById('gen-submit');
@@ -990,6 +991,7 @@ elGenSubmit.addEventListener('click', async () => {
         boardH:        parseInt(elGenBh.value)      || 20,
         slot:          parseInt(elGenSlot.value)    || 5,
         fixedPalette:  elGenFixedPalette.checked,
+        syncLanes:     elGenSyncSynced.checked,
       }),
     });
     const json = await res.json();
@@ -1037,9 +1039,10 @@ document.addEventListener('keydown', e => {
 
 const elBtnRegenQueue   = document.getElementById('btn-regen-queue');
 const elRegenModal      = document.getElementById('regen-modal');
-const elRegenDifficulty = document.getElementById('regen-difficulty');
-const elRegenLanes      = document.getElementById('regen-lanes');
-const elRegenSlot       = document.getElementById('regen-slot');
+const elRegenDifficulty  = document.getElementById('regen-difficulty');
+const elRegenLanes       = document.getElementById('regen-lanes');
+const elRegenSlot        = document.getElementById('regen-slot');
+const elRegenSyncSynced  = document.getElementById('regen-sync-synced');
 const elRegenLog        = document.getElementById('regen-log');
 const elBtnRegenCancel  = document.getElementById('btn-regen-cancel');
 const elBtnRegenSubmit  = document.getElementById('btn-regen-submit');
@@ -1070,6 +1073,7 @@ elBtnRegenSubmit.addEventListener('click', async () => {
         difficulty: elRegenDifficulty.value,
         lanes:      parseInt(elRegenLanes.value) || 3,
         slot:       parseInt(elRegenSlot.value)  || 5,
+        syncLanes:  elRegenSyncSynced.checked,
       }),
     });
     const json = await res.json();

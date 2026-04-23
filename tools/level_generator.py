@@ -319,7 +319,7 @@ def make_ammo_list(total, max_tanks, pref_pack=40):
 
     return tanks
 
-def generate_queue_group(pixels, color_table, n_lanes, params, rng):
+def generate_queue_group(pixels, color_table, n_lanes, params, rng, sync_lanes=False):
     bw = max(p['x'] for p in pixels) + 1
     bh = max(p['y'] for p in pixels) + 1
 
@@ -422,11 +422,40 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
 
     lanes = [[] for _ in range(n_lanes)]
     tank_id = 1
-    for li in range(n_lanes):
-        scattered = local_interleave(lane_pending[li])
-        for mat, ammo in scattered:
-            lanes[li].append({'id': tank_id, 'ammo': int(ammo), 'material': mat})
-            tank_id += 1
+
+    if sync_lanes:
+        # ── 同步推进模式：所有 lane 按颜色批次齐头并进 ──────────────────────────
+        # 把 lane_pending 里各 lane 的炮车按 sorted_mats 颜色顺序重新分批：
+        # 第1批 = 所有 lane 中属于 sorted_mats[0] 的炮车（各 lane 各自的）
+        # 第2批 = 所有 lane 中属于 sorted_mats[1] 的炮车，以此类推。
+        # 同一批内仍保持 local_interleave 的相邻交错。
+        color_rank = {m: i for i, m in enumerate(sorted_mats)}
+        # 先 local_interleave 各 lane，再按批次重排
+        scattered_lanes = [local_interleave(lane_pending[li]) for li in range(n_lanes)]
+        # 按颜色批次分组：batch[rank] = {lane_i: [(mat,ammo),...]}
+        from collections import defaultdict as _dd
+        batches = defaultdict(_dd(list).__class__)  # rank → lane → list
+        batches = [defaultdict(list) for _ in range(len(sorted_mats))]
+        for li, items in enumerate(scattered_lanes):
+            for mat, ammo in items:
+                batches[color_rank[mat]][li].append((mat, ammo))
+        # 按批次顺序组装：每批内所有 lane 的炮车交错写入各自 lane
+        for batch in batches:
+            if not batch:
+                continue
+            max_in_batch = max((len(v) for v in batch.values()), default=0)
+            for step in range(max_in_batch):
+                for li in range(n_lanes):
+                    if step < len(batch[li]):
+                        mat, ammo = batch[li][step]
+                        lanes[li].append({'id': tank_id, 'ammo': int(ammo), 'material': mat})
+                        tank_id += 1
+    else:
+        # ── 独立模式：每条 lane 内部各自局部交错 ────────────────────────────────
+        for li in range(n_lanes):
+            for mat, ammo in local_interleave(lane_pending[li]):
+                lanes[li].append({'id': tank_id, 'ammo': int(ammo), 'material': mat})
+                tank_id += 1
 
     return lanes, pixels  # pixels 已经过对齐，调用方需用返回值替换原始 pixels
 
@@ -434,7 +463,7 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
 # 仅重新生成炮车序列（供编辑器 API 调用，不重新量化图片）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def regen_queue(level_data, difficulty, n_lanes, slot, seed=42):
+def regen_queue(level_data, difficulty, n_lanes, slot, seed=42, sync_lanes=False):
     """
     接收完整的 levels2 JSON，只重新生成 QueueGroup，保持 PixelImageData 不变。
     返回更新后的 level_data（原地修改并返回）。
@@ -446,7 +475,7 @@ def regen_queue(level_data, difficulty, n_lanes, slot, seed=42):
     pixels     = list(level_data['PixelImageData']['pixels'])
     color_table= level_data['colorTable']
 
-    queue_group, pixels = generate_queue_group(pixels, color_table, n_lanes, params, rng)
+    queue_group, pixels = generate_queue_group(pixels, color_table, n_lanes, params, rng, sync_lanes=sync_lanes)
 
     level_data['QueueGroup']              = queue_group
     level_data['PixelImageData']['pixels']= pixels
@@ -469,7 +498,8 @@ def main():
     parser.add_argument('--board',          type=int,   nargs=2,          default=[20, 20], metavar=('W','H'))
     parser.add_argument('--slot',           type=int,   default=5,        help='槽位数（默认5）')
     parser.add_argument('--seed',           type=int,   default=42)
-    parser.add_argument('--fixed-palette',  action='store_true',          help='使用固定34色板（Lab最近邻，与pixel-tool一致）')
+    parser.add_argument('--fixed-palette',  action='store_true',          help='使用固定35色板（Lab最近邻，与pixel-tool一致）')
+    parser.add_argument('--sync-lanes',     action='store_true',          help='同步推进模式：所有轨道按颜色批次齐头并进')
     args = parser.parse_args()
 
     diff_key = args.difficulty.lower().replace(' ', '')
@@ -487,16 +517,18 @@ def main():
     else:
         n_colors = max(2, min(12, args.colors))
 
-    use_fixed = args.fixed_palette
+    use_fixed  = args.fixed_palette
+    sync_lanes = args.sync_lanes
     print(f"图片：{args.image}")
-    print(f"网格：{board_w}×{board_h}，颜色：{n_colors}，轨道：{args.lanes}，难度：{diff_key}{'，固定色板' if use_fixed else ''}")
+    print(f"网格：{board_w}×{board_h}，颜色：{n_colors}，轨道：{args.lanes}，难度：{diff_key}"
+          f"{'，固定色板' if use_fixed else ''}{'，同步推进' if sync_lanes else ''}")
 
     # 1. 图片量化
     pixels, color_table = quantize_image(args.image, board_w, board_h, n_colors, use_fixed_palette=use_fixed)
     print(f"量化完成：{len(pixels)} 像素，{len(color_table)} 色")
 
     # 2. 生成炮车队列（pixels 在内部做了整十对齐，需要接收返回值）
-    queue_group, pixels = generate_queue_group(pixels, color_table, args.lanes, params, rng)
+    queue_group, pixels = generate_queue_group(pixels, color_table, args.lanes, params, rng, sync_lanes=sync_lanes)
 
     total_ammo = sum(t['ammo'] for lane in queue_group for t in lane)
     total_px   = len(pixels)

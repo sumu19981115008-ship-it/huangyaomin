@@ -482,6 +482,17 @@
       <label>槽位数</label>
       <input type="number" id="regen-slot" min="3" max="10" value="5">
     </div>
+    <div class="regen-row" style="flex-direction:column;gap:4px">
+      <label style="color:#778;font-size:12px">轨道推进模式</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#aab">
+        <input type="radio" name="regen-sync" id="regen-sync-independent" value="independent" checked style="width:auto">
+        独立模式（每条轨道各自顺序）
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#aab">
+        <input type="radio" name="regen-sync" id="regen-sync-synced" value="synced" style="width:auto">
+        同步模式（所有轨道按颜色批次齐头并进）
+      </label>
+    </div>
     <div id="regen-log"></div>
     <div id="regen-btn-row">
       <button id="btn-regen-cancel">取消</button>
@@ -621,6 +632,18 @@
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="gen-fixed-palette" style="width:auto;accent-color:#cc5500">
         固定35色板（与像素化工具一致）
+      </label>
+    </div>
+
+    <div class="gen-row" style="flex-direction:column;gap:4px">
+      <label style="color:#778;font-size:12px">轨道推进模式</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#aab">
+        <input type="radio" name="gen-sync" id="gen-sync-independent" value="independent" checked style="width:auto">
+        独立模式（每条轨道各自顺序）
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#aab">
+        <input type="radio" name="gen-sync" id="gen-sync-synced" value="synced" style="width:auto">
+        同步模式（所有轨道按颜色批次齐头并进）
       </label>
     </div>
 

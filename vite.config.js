@@ -113,22 +113,22 @@ export default defineConfig({
         });
 
         // POST /api/regen-queue（仅重新生成炮车序列，不动画布）
-        // body: { levelData, difficulty, lanes, slot, seed? }
+        // body: { levelData, difficulty, lanes, slot, seed?, syncLanes? }
         server.middlewares.use('/api/regen-queue', (req, res) => {
           if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
           let body = '';
           req.on('data', c => { body += c; });
           req.on('end', () => {
             try {
-              const { levelData, difficulty, lanes, slot, seed } = JSON.parse(body);
-              const script = path.resolve(__dirname, 'tools', 'level_generator.py');
+              const { levelData, difficulty, lanes, slot, seed, syncLanes } = JSON.parse(body);
               const input  = JSON.stringify(levelData);
+              const syncArg = syncLanes ? 'True' : 'False';
               const result = spawnSync('python3', [
                 '-c',
                 `import sys, json; sys.path.insert(0,'${path.resolve(__dirname,"tools").replace(/\\/g,"/")}'); ` +
                 `from level_generator import regen_queue; ` +
                 `d=json.loads(sys.stdin.read()); ` +
-                `print(json.dumps(regen_queue(d,${JSON.stringify(difficulty||'medium')},${lanes||3},${slot||5},${seed||42})))`,
+                `print(json.dumps(regen_queue(d,${JSON.stringify(difficulty||'medium')},${lanes||3},${slot||5},${seed||42},sync_lanes=${syncArg})))`,
               ], { input, encoding: 'utf-8', timeout: 15000 });
 
               if (result.status !== 0) {
@@ -173,14 +173,14 @@ export default defineConfig({
         server.middlewares.use('/api/delete-levels-c2', makeDeleteHandler('levels_c2'));
 
         // POST /api/generate-level（图片 → 关卡 JSON）
-        // body: { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette }
+        // body: { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette, syncLanes }
         server.middlewares.use('/api/generate-level', (req, res) => {
           if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
           let body = '';
           req.on('data', c => { body += c; });
           req.on('end', () => {
             try {
-              const { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette } = JSON.parse(body);
+              const { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette, syncLanes } = JSON.parse(body);
 
               if (!filename || !/^level\d+\.json$/.test(filename)) {
                 res.statusCode = 400; res.end(JSON.stringify({ error: '非法文件名' })); return;
@@ -209,6 +209,7 @@ export default defineConfig({
                 '--slot',       String(slot   || 5),
               ];
               if (fixedPalette) pyArgs.push('--fixed-palette');
+              if (syncLanes)    pyArgs.push('--sync-lanes');
               const result = spawnSync('python3', pyArgs, { encoding: 'utf-8', timeout: 30000 });
 
               fs.unlinkSync(tmpImg);
