@@ -389,26 +389,40 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
             li = chosen[ti % len(chosen)]
             lane_pending[li].append((m, ammo))
 
-    # ── 第二步：对每条 lane 内部做颜色交错打散 ────────────────────────────────
-    # 按颜色分组 → round-robin 交替取出，避免同色连片
-    def interleave(items):
+    # ── 第二步：相邻颜色局部交错，保持颜色大组整体前后顺序 ────────────────────
+    # 原全局 round-robin 会把后段深色提前，破坏 sorted_mats 难度设计。
+    # 新策略：把 lane 内的炮车按颜色分组后，相邻两色之间做局部交错
+    # （A1 B1 A2 B2），但不跨越更远的颜色组，保证颜色大组顺序不变。
+    def local_interleave(items):
         from collections import defaultdict
         groups = defaultdict(list)
         for mat, ammo in items:
             groups[mat].append(ammo)
-        # 按首次出现顺序排列颜色，保留时序错配方向
         order = list(dict.fromkeys(mat for mat, _ in items))
+        if len(order) <= 1:
+            return items
+        # 相邻两色做 zip 交错，剩余尾巴直接追加
         result = []
-        while any(groups[m] for m in order):
-            for m in order:
-                if groups[m]:
-                    result.append((m, groups[m].pop(0)))
+        i = 0
+        while i < len(order):
+            if i + 1 < len(order):
+                a, b = order[i], order[i+1]
+                ga, gb = list(groups[a]), list(groups[b])
+                # 交错取，短的先耗尽
+                for j in range(max(len(ga), len(gb))):
+                    if j < len(ga): result.append((a, ga[j]))
+                    if j < len(gb): result.append((b, gb[j]))
+                i += 2
+            else:
+                m = order[i]
+                result.extend((m, ammo) for ammo in groups[m])
+                i += 1
         return result
 
     lanes = [[] for _ in range(n_lanes)]
     tank_id = 1
     for li in range(n_lanes):
-        scattered = interleave(lane_pending[li])
+        scattered = local_interleave(lane_pending[li])
         for mat, ammo in scattered:
             lanes[li].append({'id': tank_id, 'ammo': int(ammo), 'material': mat})
             tank_id += 1
