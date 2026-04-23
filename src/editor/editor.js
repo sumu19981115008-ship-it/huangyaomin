@@ -308,7 +308,7 @@ function renderColorRows() {
     const hex  = matColor(mat);
     const b    = pxCnt[mat]   || 0;
     const a    = ammoCnt[mat] || 0;
-    const ok   = b === a && b > 0;
+    const ok   = a === ceil10(b) && b > 0;
 
     const row = document.createElement('div');
     row.className = 'color-row' + (ok ? ' ok' : ' error');
@@ -327,7 +327,7 @@ function renderColorRows() {
     const stat = document.createElement('span');
     stat.className   = 'color-stat' + (ok ? ' ok' : ' warn');
     stat.textContent = `块${b} 弹${a}`;
-    stat.title = ok ? '对齐' : '数量不一致';
+    stat.title = ok ? '对齐' : `弹药应为 ${ceil10(b)}`;
 
     const del = document.createElement('button');
     del.className   = 'del-color-btn';
@@ -461,19 +461,21 @@ function deleteColor(mat) {
 }
 
 // ── 自动对齐（normalize）─────────────────────────────────────────────────────
+// 规则：画布像素永远不动，只调整炮车弹药总量 = ceil10(像素数)
 
 function normalize() {
   if (!state.data) return;
-  const pxCnt   = countPixels();
+  const pxCnt = countPixels();
+
+  // 收集所有出现的 material（含有像素的 + 有炮车的）
   const ammoCnt = countAmmo();
-  const mats    = new Set([...Object.keys(pxCnt).map(Number), ...Object.keys(ammoCnt).map(Number)]);
+  const mats = new Set([...Object.keys(pxCnt).map(Number), ...Object.keys(ammoCnt).map(Number)]);
 
   for (const mat of mats) {
-    const b = pxCnt[mat]   || 0;
-    const a = ammoCnt[mat] || 0;
+    const b = pxCnt[mat] || 0;
 
+    // 无像素 → 删所有该颜色炮车
     if (b === 0) {
-      // 无像素 → 删所有该颜色炮车
       for (const lane of state.data.QueueGroup) {
         for (let i = lane.length - 1; i >= 0; i--) {
           if (lane[i].material === mat) lane.splice(i, 1);
@@ -482,41 +484,118 @@ function normalize() {
       continue;
     }
 
-    const target = b % 10 === 0 ? b : (floor10(b) || 10);
+    const target = ceil10(b); // 与生成器保持一致，向上取整
 
-    // 像素多余 → 从末尾删
-    if (b > target) {
-      let toRemove = b - target;
-      const pxArr = state.data.PixelImageData.pixels;
-      for (let i = pxArr.length - 1; i >= 0 && toRemove > 0; i--) {
-        if (pxArr[i].material === mat) { pxArr.splice(i, 1); toRemove--; }
+    // 收集该颜色所有炮车（保持原有顺序，不改队列归属）
+    const allTanks = [];
+    for (const lane of state.data.QueueGroup) {
+      for (const t of lane) {
+        if (t.material === mat) allTanks.push(t);
       }
     }
 
-    // 无炮车 → 新建一辆
-    const allTanks = state.data.QueueGroup.flatMap((lane, li) =>
-      lane.map((t, ti) => ({ t, li, ti }))
-    ).filter(({ t }) => t.material === mat);
-
+    // 无炮车 → 按标准包新建（优先 20 发中包，上限 5 辆）
     if (allTanks.length === 0) {
-      const newId = Math.max(0, ...state.data.QueueGroup.flat().map(t => t.id)) + 1;
-      state.data.QueueGroup[0].push({ id: newId, ammo: target, material: mat });
+      const newTanks = makeAmmoList(target, 5, 20);
+      const newIdBase = Math.max(0, ...state.data.QueueGroup.flat().map(t => t.id)) + 1;
+      const laneIdx = 0;
+      newTanks.forEach((ammo, i) => {
+        state.data.QueueGroup[laneIdx].push({ id: newIdBase + i, ammo, material: mat });
+      });
       continue;
     }
 
-    // 均匀分配弹药
-    const n    = allTanks.length;
-    let base   = Math.max(10, Math.floor(target / n / 10) * 10);
-    while (n > 1 && base * (n - 1) > target - 10) base -= 10;
-    if (base < 10) base = 10;
-    const last = Math.max(10, target - base * (n - 1));
-    allTanks.forEach(({ t }, i) => { t.ammo = (i === n - 1) ? last : base; });
+    let curTotal = allTanks.reduce((s, t) => s + t.ammo, 0);
+    let diff = target - curTotal; // 正 = 需要增加，负 = 需要减少
+
+    if (diff > 0) {
+      // 弹药不足：把差值加到最后一辆，若超过 40 则拆出新炮车
+      const last = allTanks[allTanks.length - 1];
+      last.ammo += diff;
+      // 若最后一辆超过 40，把超出部分拆成新炮车追加到同队列末尾
+      while (last.ammo > 40) {
+        const overflow = last.ammo - 40;
+        last.ammo = 40;
+        const newId = Math.max(0, ...state.data.QueueGroup.flat().map(t => t.id)) + 1;
+        // 找到 last 所在队列
+        for (const lane of state.data.QueueGroup) {
+          const idx = lane.findIndex(t => t === last);
+          if (idx !== -1) {
+            const newTank = { id: newId, ammo: overflow, material: mat };
+            lane.splice(idx + 1, 0, newTank);
+            // 如果 overflow 还超过 40，下次循环会继续处理 newTank
+            // 但 allTanks 没有 newTank，跳出后不再管（已满足 target）
+            break;
+          }
+        }
+        break; // 一次最多只拆一层，diff 已经消化完
+      }
+    } else if (diff < 0) {
+      // 弹药过多：从最后一辆往前减，减完就删
+      let excess = -diff;
+      for (let i = allTanks.length - 1; i >= 0 && excess > 0; i--) {
+        const t = allTanks[i];
+        if (t.ammo <= excess) {
+          // 整辆删掉
+          excess -= t.ammo;
+          for (const lane of state.data.QueueGroup) {
+            const idx = lane.indexOf(t);
+            if (idx !== -1) { lane.splice(idx, 1); break; }
+          }
+        } else {
+          // 减去部分弹药，对齐到 10 的倍数
+          t.ammo -= excess;
+          t.ammo  = Math.max(10, Math.round(t.ammo / 10) * 10);
+          excess  = 0;
+        }
+      }
+    }
+    // diff === 0：已对齐，不做任何操作
   }
 
   renderColorRows();
   renderBrushPalette();
-  renderCanvas();
+  // 画布不重绘（像素未变动）
   showSaveMsg('已对齐', 'ok');
+}
+
+// 标准弹药包拆分（与 level_generator.py make_ammo_list 逻辑一致）
+function makeAmmoList(total, maxTanks, prefPack) {
+  const packOrder = { 40: [40, 20, 10], 20: [20, 40, 10], 10: [10, 20, 40] }[prefPack] || [20, 40, 10];
+  const tanks = [];
+  let remain = total;
+  for (const pack of packOrder) {
+    while (remain >= pack && tanks.length < maxTanks) {
+      tanks.push(pack);
+      remain -= pack;
+    }
+    if (remain === 0) break;
+  }
+  if (remain > 0) {
+    if (tanks.length > 0 && tanks[tanks.length - 1] + remain <= 40) {
+      tanks[tanks.length - 1] += remain;
+    } else {
+      while (remain > 40) { tanks.push(40); remain -= 40; }
+      if (remain > 0) tanks.push(remain);
+    }
+  }
+  return tanks;
+}
+
+// ── 保存校验（允许弹药 = ceil10(像素)，手绘场景像素不一定是整十）──────────────
+
+function checkSaveErrors() {
+  const pxCnt   = countPixels();
+  const ammoCnt = countAmmo();
+  const mats    = new Set([...Object.keys(pxCnt).map(Number), ...Object.keys(ammoCnt).map(Number)]);
+  const errors  = [];
+  for (const mat of mats) {
+    const b = pxCnt[mat] || 0;
+    const a = ammoCnt[mat] || 0;
+    const expected = ceil10(b);
+    if (a !== expected) errors.push(`mat${mat}(${matColor(mat)}): 块${b} 弹${a}≠${expected}`);
+  }
+  return errors;
 }
 
 // ── 保存 ──────────────────────────────────────────────────────────────────────
@@ -524,14 +603,7 @@ function normalize() {
 async function saveLevel() {
   if (!state.data || !state.currentFile) return;
 
-  const pxCnt   = countPixels();
-  const ammoCnt = countAmmo();
-  const mats    = new Set([...Object.keys(pxCnt).map(Number), ...Object.keys(ammoCnt).map(Number)]);
-  const errors  = [];
-  for (const mat of mats) {
-    const b = pxCnt[mat] || 0, a = ammoCnt[mat] || 0;
-    if (b !== a) errors.push(`mat${mat}(${matColor(mat)}): 块${b}≠弹${a}`);
-  }
+  const errors = checkSaveErrors();
   if (errors.length) {
     showSaveMsg('校验失败：' + errors.slice(0, 2).join(' | '), 'err');
     return;
@@ -566,14 +638,7 @@ async function saveAs() {
     return;
   }
 
-  const pxCnt   = countPixels();
-  const ammoCnt = countAmmo();
-  const mats    = new Set([...Object.keys(pxCnt).map(Number), ...Object.keys(ammoCnt).map(Number)]);
-  const errors  = [];
-  for (const mat of mats) {
-    const b = pxCnt[mat] || 0, a = ammoCnt[mat] || 0;
-    if (b !== a) errors.push(`mat${mat}(${matColor(mat)}): 块${b}≠弹${a}`);
-  }
+  const errors = checkSaveErrors();
   if (errors.length) {
     showSaveMsg('校验失败：' + errors.slice(0, 2).join(' | '), 'err');
     return;

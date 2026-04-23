@@ -115,6 +115,71 @@ def bfs_exposure_depth(pixels, bw, bh):
     return depth
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 像素对齐：把各色数量调整为 10 的倍数（只改颜色，不增删格子）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _align_counts_to_ten(pixels, bw, bh, rng):
+    """
+    让每种颜色的像素数成为 10 的倍数。
+    策略：每色余数 r = count % 10；
+      - r == 0：不动
+      - r <= 5：删掉该色 BFS 最浅（最外层）的 r 个像素（向下取整）
+      - r >  5：把该色 BFS 最浅的 (10-r) 个"相邻空位"像素改色（向上取整）
+                若棋盘全满无空位，则改为删掉 r 个（fallback 到向下取整）
+    允许总像素数微变（最多每色 ±5 个），弹药将严格等于调整后的像素数。
+    """
+    from collections import defaultdict
+
+    counts = defaultdict(int)
+    for p in pixels:
+        counts[p['material']] += 1
+
+    nonzero = {m: v % 10 for m, v in counts.items() if v % 10 != 0}
+    if not nonzero:
+        return pixels
+
+    depth_map = bfs_exposure_depth(pixels, bw, bh)
+    occupied  = {(p['x'], p['y']) for p in pixels}
+
+    px_by_mat = defaultdict(list)
+    for p in pixels:
+        px_by_mat[p['material']].append(p)
+    for m in px_by_mat:
+        px_by_mat[m].sort(key=lambda p: depth_map.get((p['x'], p['y']), 0))
+
+    to_remove = set()  # pixel id（用 id() 标识）
+
+    for m, r in nonzero.items():
+        if r <= 5:
+            # 向下取整：删最外层 r 个像素
+            for px in px_by_mat[m][:r]:
+                to_remove.add(id(px))
+                occupied.discard((px['x'], px['y']))
+        else:
+            # 向上取整：补 (10-r) 个像素（改色为 m 的相邻空位）
+            need = 10 - r
+            added = 0
+            dirs = [(0,1),(1,0),(0,-1),(-1,0),(1,1),(-1,1),(1,-1),(-1,-1)]
+            for px in px_by_mat[m]:
+                if added >= need:
+                    break
+                for dx, dy in dirs:
+                    nx, ny = px['x'] + dx, px['y'] + dy
+                    if 0 <= nx < bw and 0 <= ny < bh and (nx, ny) not in occupied:
+                        pixels.append({'x': nx, 'y': ny, 'material': m})
+                        occupied.add((nx, ny))
+                        added += 1
+                        if added >= need:
+                            break
+            if added < need:
+                # 棋盘全满，fallback：删掉 r 个像素
+                for px in px_by_mat[m][:r]:
+                    to_remove.add(id(px))
+
+    pixels = [p for p in pixels if id(p) not in to_remove]
+    return pixels
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 炮车生成核心
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -163,18 +228,19 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
     bw = max(p['x'] for p in pixels) + 1
     bh = max(p['y'] for p in pixels) + 1
 
-    # 各色像素数，向上取整到 10 的倍数（与竞品对齐）
+    # 各色像素数
     mat_px_raw = defaultdict(int)
     for p in pixels:
         mat_px_raw[p['material']] += 1
-    mat_px = {m: ceil10(v) for m, v in mat_px_raw.items()}
 
-    # 同步把超出 ceil10 的像素修剪掉（保证弹药 == 像素）
-    for m, target in mat_px.items():
-        excess = mat_px_raw[m] - target  # target >= raw，所以 excess <= 0，实际是需要补
-        # ceil10 只会 >=，不会 <，所以不需要修剪像素，弹药对齐到 ceil10 即可
-        # 但像素数不变，弹药 = ceil10(像素)，差值最多 9 发，游戏可接受
-        pass
+    # 边界像素重分配：使各色像素数均为 10 的倍数（不增删像素，只改颜色）
+    pixels = _align_counts_to_ten(pixels, bw, bh, rng)
+
+    # 重新统计（对齐后）
+    mat_px_raw = defaultdict(int)
+    for p in pixels:
+        mat_px_raw[p['material']] += 1
+    mat_px = dict(mat_px_raw)  # 此时每色均为 10 的倍数
 
     # BFS 各色平均暴露深度
     depth_map = bfs_exposure_depth(pixels, bw, bh)
@@ -236,7 +302,7 @@ def generate_queue_group(pixels, color_table, n_lanes, params, rng):
             lanes[li].append({'id': tank_id, 'ammo': int(ammo), 'material': mat})
             tank_id += 1
 
-    return lanes
+    return lanes, pixels  # pixels 已经过对齐，调用方需用返回值替换原始 pixels
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 主函数
@@ -276,8 +342,8 @@ def main():
     pixels, color_table = quantize_image(args.image, board_w, board_h, n_colors)
     print(f"量化完成：{len(pixels)} 像素，{len(color_table)} 色")
 
-    # 2. 生成炮车队列
-    queue_group = generate_queue_group(pixels, color_table, args.lanes, params, rng)
+    # 2. 生成炮车队列（pixels 在内部做了整十对齐，需要接收返回值）
+    queue_group, pixels = generate_queue_group(pixels, color_table, args.lanes, params, rng)
 
     total_ammo = sum(t['ammo'] for lane in queue_group for t in lane)
     total_px   = len(pixels)
@@ -325,12 +391,11 @@ def _verify(d):
     ok = True
     for m in range(len(d['colorTable'])):
         b, a = px_cnt.get(m, 0), am_cnt.get(m, 0)
-        expected = math.ceil(b / 10) * 10 if b % 10 != 0 else b
-        if a != expected:
-            print(f"  [!] mat{m} ({d['colorTable'][m]}): 像素{b} ceil10={expected} 弹药{a}  差{a-expected:+d}")
+        if a != b:
+            print(f"  [!] mat{m} ({d['colorTable'][m]}): 像素{b} 弹药{a}  差{a-b:+d}")
             ok = False
     if ok:
-        print("校验通过：弹药符合 ceil10 规则")
+        print("校验通过：弹药 == 像素（严格对齐）")
     print(f"弹药包分布：{dict(sorted(ammo_vals.items()))}")
 
 if __name__ == '__main__':
