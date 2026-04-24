@@ -117,9 +117,9 @@ function apiSaveUrl()  {
   return '/api/save-level-a2';
 }
 function levelDirUrl() {
-  if (state.group === 'b') return '/levels_b2';
-  if (state.group === 'c') return '/levels_c2';
-  return '/levels_a2';
+  if (state.group === 'b') return '/levels/b';
+  if (state.group === 'c') return '/levels/c';
+  return '/levels/a';
 }
 
 async function loadLevelList() {

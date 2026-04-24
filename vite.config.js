@@ -22,16 +22,16 @@ export default defineConfig({
       name: 'editor-api',
       configureServer(server) {
 
-        // GET /api/level-list（旧格式，保留兼容）
+        // GET /api/level-list（旧格式归档兼容，实际目录已移入 _archive/levels_old_format）
         server.middlewares.use('/api/level-list', (req, res) => {
-          const files = sortedLevelFiles(path.resolve(__dirname, 'levels'));
+          const files = sortedLevelFiles(path.resolve(__dirname, '_archive/levels_old_format'));
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(files));
         });
 
         // GET /api/level-list-a2（levels2 格式 A 组）
         server.middlewares.use('/api/level-list-a2', (req, res) => {
-          const files = sortedLevelFiles(path.resolve(__dirname, 'levels_a2'));
+          const files = sortedLevelFiles(path.resolve(__dirname, 'levels/a'));
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(files));
         });
@@ -49,7 +49,7 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: '非法文件名' }));
                 return;
               }
-              fs.writeFileSync(path.resolve(__dirname, 'levels', filename), JSON.stringify(data, null, 0));
+              fs.writeFileSync(path.resolve(__dirname, '_archive/levels_old_format', filename), JSON.stringify(data, null, 0));
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {
@@ -72,7 +72,7 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: '非法文件名' }));
                 return;
               }
-              fs.writeFileSync(path.resolve(__dirname, 'levels_a2', filename), JSON.stringify(data, null, 0));
+              fs.writeFileSync(path.resolve(__dirname, 'levels/a', filename), JSON.stringify(data, null, 0));
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {
@@ -84,7 +84,7 @@ export default defineConfig({
 
         // GET /api/level-list-c2（levels2 格式 C 组）
         server.middlewares.use('/api/level-list-c2', (req, res) => {
-          const files = sortedLevelFiles(path.resolve(__dirname, 'levels_c2'));
+          const files = sortedLevelFiles(path.resolve(__dirname, 'levels/c'));
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(files));
         });
@@ -102,7 +102,7 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: '非法文件名' }));
                 return;
               }
-              fs.writeFileSync(path.resolve(__dirname, 'levels_c2', filename), JSON.stringify(data, null, 0));
+              fs.writeFileSync(path.resolve(__dirname, 'levels/c', filename), JSON.stringify(data, null, 0));
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {
@@ -168,9 +168,9 @@ export default defineConfig({
             }
           });
         };
-        server.middlewares.use('/api/delete-levels-a2', makeDeleteHandler('levels_a2'));
-        server.middlewares.use('/api/delete-levels-b2', makeDeleteHandler('levels_b2'));
-        server.middlewares.use('/api/delete-levels-c2', makeDeleteHandler('levels_c2'));
+        server.middlewares.use('/api/delete-levels-a2', makeDeleteHandler('levels/a'));
+        server.middlewares.use('/api/delete-levels-b2', makeDeleteHandler('levels/b'));
+        server.middlewares.use('/api/delete-levels-c2', makeDeleteHandler('levels/c'));
 
         // POST /api/generate-level（图片 → 关卡 JSON）
         // body: { group, filename, imageBase64, difficulty, lanes, colors, boardW, boardH, slot, fixedPalette, syncLanes }
@@ -195,8 +195,8 @@ export default defineConfig({
               const imgBuf = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
               fs.writeFileSync(tmpImg, imgBuf);
 
-              const dirMap  = { a: 'levels_a2', b: 'levels_b2', c: 'levels_c2' };
-              const outDir  = path.resolve(__dirname, dirMap[group] || 'levels_c2');
+              const dirMap  = { a: 'levels/a', b: 'levels/b', c: 'levels/c' };
+              const outDir  = path.resolve(__dirname, dirMap[group] || 'levels/c');
               const outFile = path.resolve(outDir, filename);
               const script  = path.resolve(__dirname, 'tools', 'level_generator.py');
 
@@ -233,7 +233,7 @@ export default defineConfig({
 
         // GET /api/level-list-b2（levels2 格式 B 组）
         server.middlewares.use('/api/level-list-b2', (req, res) => {
-          const files = sortedLevelFiles(path.resolve(__dirname, 'levels_b2'));
+          const files = sortedLevelFiles(path.resolve(__dirname, 'levels/b'));
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(files));
         });
@@ -251,7 +251,7 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: '非法文件名' }));
                 return;
               }
-              fs.writeFileSync(path.resolve(__dirname, 'levels_b2', filename), JSON.stringify(data, null, 0));
+              fs.writeFileSync(path.resolve(__dirname, 'levels/b', filename), JSON.stringify(data, null, 0));
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {

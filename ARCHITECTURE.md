@@ -8,40 +8,55 @@
 
 ```
 game2/
-├── index.html          # 游戏入口，加载 phaser.min.js + src/main.js
-├── editor.html         # 关卡编辑器入口（独立，不依赖 Phaser）
-├── pixel-tool.html     # 像素图→关卡JSON 转换工具（单文件）
-├── phaser.min.js       # Phaser 3 本地副本（不走 npm，避免打包体积问题）
-├── vite.config.js      # 开发服务器 port=5174，build outDir=dist，含编辑器 API 中间件
-├── serve.ps1           # 不依赖 node 的静态服务器备用方案（PowerShell .NET）
-├── package.json        # 仅 vite 一个 devDependency，type=module
+├── index.html              # 游戏入口，加载 phaser.min.js + src/main.js
+├── editor.html             # 关卡编辑器入口（独立，不依赖 Phaser）
+├── pixel-tool.html         # 像素图→关卡JSON 转换工具（单文件）
+├── phaser.min.js           # Phaser 3 本地副本（不走 npm，避免打包体积问题）
+├── vite.config.js          # 开发服务器 port=5174，build outDir=dist，含编辑器 API 中间件
+├── serve.ps1               # 不依赖 node 的静态服务器备用方案（PowerShell .NET）
+├── package.json            # 仅 vite 一个 devDependency，type=module
 │
-├── levels/             # 旧格式 A 组关卡（entities/initialTanks，保留备用）
-├── levels2/            # 竞品原始关卡（300个，研究用，不参与游戏）
-├── levels_a2/          # ✅ A 组关卡，299 个，统一 levels2 格式（带 colorTable）
-├── levels_b2/          # ✅ B 组关卡，171 个，统一 levels2 格式（来自竞品筛选）
-├── levels_c2/          # ✅ C 组关卡，编辑器创作专用，数量动态增长
+├── levels/                 # 全部关卡（统一 levels2 格式）
+│   ├── a/                  # ✅ A 组，299 关，自制
+│   ├── b/                  # ✅ B 组，171 关，来自竞品筛选
+│   └── c/                  # ✅ C 组，编辑器创作，数量动态增长
 │
 ├── tools/
-│   ├── convert_a_to_levels2.py   # 将旧格式 A 组转换为 levels2 格式
-│   ├── convert_b_to_levels2.py   # 从竞品原始文件筛选并转换 B 组
-│   ├── difficulty_analysis.py    # 关卡难度特征提取 + 回归分析脚本
-│   └── level_generator.py        # 图片→关卡自动生成器（CLI + 编辑器后端）
+│   ├── sim.js              # 关卡模拟器（批量跑关，无渲染）
+│   ├── level_generator.py  # 图片→关卡自动生成器（CLI + 编辑器后端）
+│   ├── difficulty_analysis.py  # 关卡难度特征提取 + 回归分析
+│   ├── sim_analyze.mjs     # 指定帧数后打印完整游戏状态（卡关分析）
+│   ├── sim_debug.mjs       # 打印单关模拟详情
+│   ├── sim_detail.mjs      # 每帧决策追踪
+│   ├── debug/              # 单关专项调试脚本（trace_*/debug_*）
+│   └── testdata/           # 测试用关卡 JSON 样本 + 图片
+│
+├── research/               # AutoBot 算法演化研究档案
+│   ├── README.md           # v1~v10 算法演化说明
+│   ├── bots/               # 历代 Bot 源码快照（v1~v7）及配套模拟器
+│   └── results/
+│       └── benchmark.md    # 各版本通关率对标表
+│
+├── _archive/               # 历史归档（不参与游戏）
+│   ├── levels_old_format/  # 旧格式 A 组关卡（entities/initialTanks）
+│   ├── levels2_competitor_raw/  # 竞品原始关卡（300个，研究参考）
+│   ├── scripts_convert/    # 旧格式转换脚本（已完成历史使命）
+│   └── dev-log/            # 开发日志
 │
 └── src/
-    ├── main.js         # Phaser.Game 初始化入口
-    ├── constants.js    # 所有常量 + 动态几何对象 G
-    ├── GameLogic.js    # 纯游戏逻辑（无渲染依赖）
-    ├── GameScene.js    # Phaser Scene 调度层
-    ├── renderer.js     # 所有绘制逻辑 + 坐标工具函数
-    ├── bullets.js      # 子弹物理 + 粒子特效
-    ├── items.js        # 三个道具的完整逻辑与特效
-    ├── AutoBot.js      # 自动打关机器人（可开关，不影响正常游戏逻辑）
+    ├── main.js             # Phaser.Game 初始化入口
+    ├── constants.js        # 所有常量 + 动态几何对象 G
+    ├── GameLogic.js        # 纯游戏逻辑（无渲染依赖）
+    ├── GameScene.js        # Phaser Scene 调度层
+    ├── renderer.js         # 所有绘制逻辑 + 坐标工具函数
+    ├── bullets.js          # 子弹物理 + 粒子特效
+    ├── items.js            # 三个道具的完整逻辑与特效
+    ├── AutoBot.js          # 自动打关机器人（可开关，不影响正常游戏逻辑）
     ├── dev/
-    │   └── DevTools.js # 开发用跳关面板（生产环境可关闭）
-    ├── editor/
-    │   └── editor.js   # 关卡编辑器逻辑（与游戏独立）
-    └── ui/             # 预留目录（待开发 UI 组件）
+    │   ├── DevTools.js     # 开发用跳关面板（生产环境可关闭）
+    │   └── PlayRecorder.js # 游戏录播回放
+    └── editor/
+        └── editor.js       # 关卡编辑器逻辑（与游戏独立）
 ```
 
 ---
@@ -75,7 +90,7 @@ GameScene（调度）
 
 ## 四、关卡 JSON 格式（统一 levels2 格式）
 
-> **当前唯一格式**。`levels_a2/`、`levels_b2/`、`levels_c2/` 均使用此格式。
+> **当前唯一格式**。`levels/a/`、`levels/b/`、`levels/c/` 均使用此格式。
 
 ```jsonc
 {
@@ -120,7 +135,7 @@ levels2 坐标（y=0 顶部）= 游戏内 grid[row][col] 坐标
 pixel.y === grid row，直接使用，无需转换
 
 旧格式（levels/）坐标翻转：row = (boardHeight-1) - cell.y
-→ levels_a2/ 的转换脚本已在生成时完成翻转，游戏不再翻转
+→ levels/a/ 的转换脚本已在生成时完成翻转，游戏不再翻转
 ```
 
 ### 约束
@@ -371,27 +386,27 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 
 | 组 | 目录 | 数量 | 来源 | 特点 |
 |----|------|------|------|------|
-| A | `levels_a2/` | 299 关 | 自制 | colorTable 动态分配，Difficulty 固定 Medium |
-| B | `levels_b2/` | 171 关 | 竞品筛选 | 含 Difficulty 字段（Easy/Medium/Hard/Very Hard） |
-| C | `levels_c2/` | 动态 | 编辑器创作 | 编辑器默认保存目标，Difficulty 由生成器或手动设置 |
+| A | `levels/a/` | 299 关 | 自制 | colorTable 动态分配，Difficulty 固定 Medium |
+| B | `levels/b/` | 171 关 | 竞品筛选 | 含 Difficulty 字段（Easy/Medium/Hard/Very Hard） |
+| C | `levels/c/` | 动态 | 编辑器创作 | 编辑器默认保存目标，Difficulty 由生成器或手动设置 |
 
 ### 编辑器 API 接口
 
 | 接口 | 说明 |
 |------|------|
-| `GET /api/level-list-a2` | 获取 levels_a2/ 文件名列表 |
-| `POST /api/save-level-a2` | 保存到 levels_a2/ |
-| `POST /api/delete-levels-a2` | 批量删除 levels_a2/ 中的关卡（body: `{ filenames: [] }`） |
-| `GET /api/level-list-b2` | 获取 levels_b2/ 文件名列表 |
-| `POST /api/save-level-b2` | 保存到 levels_b2/ |
-| `POST /api/delete-levels-b2` | 批量删除 levels_b2/ 中的关卡 |
-| `GET /api/level-list-c2` | 获取 levels_c2/ 文件名列表 |
-| `POST /api/save-level-c2` | 保存到 levels_c2/ |
-| `POST /api/delete-levels-c2` | 批量删除 levels_c2/ 中的关卡 |
+| `GET /api/level-list-a2` | 获取 levels/a/ 文件名列表 |
+| `POST /api/save-level-a2` | 保存到 levels/a/ |
+| `POST /api/delete-levels-a2` | 批量删除 levels/a/ 中的关卡（body: `{ filenames: [] }`） |
+| `GET /api/level-list-b2` | 获取 levels/b/ 文件名列表 |
+| `POST /api/save-level-b2` | 保存到 levels/b/ |
+| `POST /api/delete-levels-b2` | 批量删除 levels/b/ 中的关卡 |
+| `GET /api/level-list-c2` | 获取 levels/c/ 文件名列表 |
+| `POST /api/save-level-c2` | 保存到 levels/c/ |
+| `POST /api/delete-levels-c2` | 批量删除 levels/c/ 中的关卡 |
 | `POST /api/generate-level` | 图片→关卡 JSON（调用 level_generator.py，支持 `fixedPalette` 参数） |
 | `POST /api/regen-queue` | 仅重新生成炮车序列，保持画布不变（body: `{ levelData, difficulty, lanes, slot }`） |
-| `GET /api/level-list` | 旧接口，指向 levels/（保留兼容） |
-| `POST /api/save-level` | 旧接口，保存到 levels/（保留兼容） |
+| `GET /api/level-list` | 旧接口，指向 _archive/levels_old_format/（兼容保留） |
+| `POST /api/save-level` | 旧接口，保存到 _archive/levels_old_format/（兼容保留） |
 
 ### 编辑器试玩机制
 
@@ -527,7 +542,7 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 2. 点「自动寻优网格」→ 先检测像素风原生尺寸，否则三段式搜索最优 GW×GH
 3. 颜色控制（Median Cut 量化，调整 K/T）→「重新生成」
 4. 可选「四格对比预览」查看 top-4 候选尺寸
-5. 生成关卡 JSON → 保存到 levels_a2/
+5. 生成关卡 JSON → 保存到 levels/a/（或 b/c，由编辑器选择的组决定）
 
 **网格评分**：`combo = cellPurity×0.6 + edge×0.2 + rle×0.2`
 
@@ -571,9 +586,9 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 | 问题 | 说明 |
 |------|------|
 | A 组 4 关弹药>像素 | L33/59/85/92 原始设计如此（弹药比像素多 10~20 发），游戏可正常运行 |
-| 旧格式 levels/ 保留 | 旧格式数据保留在 levels/ 目录，不参与游戏，仅作备份 |
+| 旧格式关卡已归档 | 旧格式数据已移入 _archive/levels_old_format/，不参与游戏 |
 | Phaser Zone 交互 | `container.setVisible(false)` 不禁用 Zone，必须用 depth=-1 + 遮罩方案（参见 DevTools） |
-| pixel-tool.html 输出 | 当前仍输出到 levels/ 旧格式，待更新为输出到 levels_a2/（levels2 格式） |
+| pixel-tool.html 输出 | 当前仍输出到旧格式路径，待更新为输出到 levels/a/（levels2 格式） |
 | C 组上限 500 | TOTAL_LEVELS_C=500 是预加载上限，Phaser 会静默忽略不存在的文件，无需手动维护 |
 | AutoBot 通关率（2026-04-24 v10） | A 组 ✓277/299（92.6%）；B 组 ✓164/171（95.9%）。卡关22+7=29关，均为结构性死锁（颜色依赖图问题），零失败 |
 | A 组空关已清理 | 原 level285/level289 为空关（boardSize=0），已删除，后续关卡顺位前移，A 组共 299 关 |

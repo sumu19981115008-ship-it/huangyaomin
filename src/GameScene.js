@@ -63,13 +63,13 @@ export class GameScene extends Phaser.Scene {
 
   preload() {
     for (let i = 1; i <= TOTAL_LEVELS; i++) {
-      this.load.json(`level${i}`, `/levels_a2/level${i}.json`);
+      this.load.json(`level${i}`, `/levels/a/level${i}.json`);
     }
     for (let i = 1; i <= TOTAL_LEVELS_B; i++) {
-      this.load.json(`level_b${i}`, `/levels_b2/level${i}.json`);
+      this.load.json(`level_b${i}`, `/levels/b/level${i}.json`);
     }
     for (let i = 1; i <= this._totalLevelsC; i++) {
-      this.load.json(`level_c${i}`, `/levels_c2/level${i}.json`);
+      this.load.json(`level_c${i}`, `/levels/c/level${i}.json`);
     }
   }
 

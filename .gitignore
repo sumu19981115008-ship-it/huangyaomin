@@ -2,8 +2,15 @@ node_modules/
 dist/
 LOCAL_URL.txt
 
-# 旧格式关卡备份（不纳入版本管理，游戏不再使用）
+# 旧 B 组备份（已归档，不纳入版本管理）
 levels_b/
+
+# _archive 中的大体积原始关卡数据（仅保留转换脚本）
+_archive/levels_old_format/
+_archive/levels2_competitor_raw/
+
+# 临时生成文件
+tools/_tmp_input.png
 
 # Python缓存
 __pycache__/

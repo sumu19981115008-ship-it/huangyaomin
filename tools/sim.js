@@ -5,9 +5,9 @@
  *   node tools/sim.js [关卡目录] [起始关] [结束关]
  *
  * 示例：
- *   node tools/sim.js levels_a2 1 50       # 跑 A 组第 1~50 关
- *   node tools/sim.js levels_b2 1 167       # 跑 B 组全部
- *   node tools/sim.js levels_a2 13 13       # 只跑第 13 关（调试）
+ *   node tools/sim.js levels/a 1 50       # 跑 A 组第 1~50 关
+ *   node tools/sim.js levels/b 1 171      # 跑 B 组全部
+ *   node tools/sim.js levels/a 13 13      # 只跑第 13 关（调试）
  *
  * 输出：每关的结果（win/fail/stuck）、帧数、无用车剔除次数
  */
@@ -24,7 +24,7 @@ import { GameLogic } from '../src/GameLogic.js';
 import { G, SIDE }   from '../src/constants.js';
 
 // ── 参数解析 ──────────────────────────────────────────────────
-const [,, dir = 'levels_a2', fromStr = '1', toStr = '10'] = process.argv;
+const [,, dir = 'levels/a', fromStr = '1', toStr = '10'] = process.argv;
 const fromIdx = parseInt(fromStr) - 1;  // 转 0-based
 const toIdx   = parseInt(toStr)   - 1;
 
