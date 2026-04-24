@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-24（AutoBot bufferDanger 预测机制：A组82%/B组86%通关率）
+> 每次新开发前阅读本文档。最后更新：2026-04-25（DevTools 下拉跳关、关卡组下拉切换、A组清理空关至299关；AutoBot：A组86.6%/B组90.1%）
 
 ---
 
@@ -18,8 +18,8 @@ game2/
 │
 ├── levels/             # 旧格式 A 组关卡（entities/initialTanks，保留备用）
 ├── levels2/            # 竞品原始关卡（300个，研究用，不参与游戏）
-├── levels_a2/          # ✅ A 组关卡，301 个，统一 levels2 格式（带 colorTable）
-├── levels_b2/          # ✅ B 组关卡，167 个，统一 levels2 格式（来自竞品筛选）
+├── levels_a2/          # ✅ A 组关卡，299 个，统一 levels2 格式（带 colorTable）
+├── levels_b2/          # ✅ B 组关卡，171 个，统一 levels2 格式（来自竞品筛选）
 ├── levels_c2/          # ✅ C 组关卡，编辑器创作专用，数量动态增长
 │
 ├── tools/
@@ -147,8 +147,8 @@ pixel.y === grid row，直接使用，无需转换
 | `BUFFER_CAP` | 5 | 暂存区初始容量（关卡可通过 ConveyorLimit 覆盖） |
 | `BULLET_SPEED` | 14 | 子弹像素速度/帧 |
 | `TURRET_SPEED` | 3 | 炮车路径速度/帧 |
-| `TOTAL_LEVELS` | 301 | A 组关卡数 |
-| `TOTAL_LEVELS_B` | 167 | B 组关卡数 |
+| `TOTAL_LEVELS` | 299 | A 组关卡数 |
+| `TOTAL_LEVELS_B` | 171 | B 组关卡数 |
 | `TOTAL_LEVELS_C` | 500 | C 组上限（实际按文件存在数量加载） |
 
 ### 动态几何对象 G
@@ -333,16 +333,18 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 
 ### UI
 
-- 右上角工具栏横排：`[🤖 自动]` `[切换 B 组]`，统一胶囊样式
-- `[DEV]` 按钮移至左下角，不与工具栏冲突
-- 激活状态下按钮变黄色显示 `▶ 自动ON`，关卡切换时保持开关状态
+- 右上角工具栏横排：`[DEV]` `[🤖 自动]` `[A组下拉▼]`，统一胶囊样式
+- `[A组下拉▼]` 为 HTML select，直接选 A/B/C 组（显示各组关卡数），选中即切换
+- 激活状态下自动按钮变黄色显示 `▶ 自动ON`，关卡切换时保持开关状态
 
 ---
 
 ## 十一、DevTools（dev/DevTools.js）
 
 - 仅在 `ENABLED=true` 时构建（Vite dev 模式自动启用，或设置 `window.__DEV_TOOLS__=true`）
-- 触发按钮位于**左下角**（`(8, VH-8)`），不与右上角工具栏冲突
+- 触发按钮 `[DEV]` 位于**右上角工具栏**，与"🤖 自动"同行排列
+- 面板从工具栏下方 y=42 开始，不遮挡工具栏
+- 跳关使用 HTML `<select>` 下拉框，选中即跳转，替代原来的翻页格子
 - 面板隐藏时：zones depth 降为 -1，同时启用 depth=102 的遮罩 Zone 吞掉穿透点击
 - **注意**：Phaser `container.setVisible(false)` 不影响 Zone 交互，必须用 depth+遮罩方案
 
@@ -356,8 +358,8 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 
 | 组 | 目录 | 数量 | 来源 | 特点 |
 |----|------|------|------|------|
-| A | `levels_a2/` | 301 关 | 自制 | colorTable 动态分配，Difficulty 固定 Medium |
-| B | `levels_b2/` | 167 关 | 竞品筛选 | 含 Difficulty 字段（Easy/Medium/Hard/Very Hard） |
+| A | `levels_a2/` | 299 关 | 自制 | colorTable 动态分配，Difficulty 固定 Medium |
+| B | `levels_b2/` | 171 关 | 竞品筛选 | 含 Difficulty 字段（Easy/Medium/Hard/Very Hard） |
 | C | `levels_c2/` | 动态 | 编辑器创作 | 编辑器默认保存目标，Difficulty 由生成器或手动设置 |
 
 ### 编辑器 API 接口
@@ -560,5 +562,5 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 | Phaser Zone 交互 | `container.setVisible(false)` 不禁用 Zone，必须用 depth=-1 + 遮罩方案（参见 DevTools） |
 | pixel-tool.html 输出 | 当前仍输出到 levels/ 旧格式，待更新为输出到 levels_a2/（levels2 格式） |
 | C 组上限 500 | TOTAL_LEVELS_C=500 是预加载上限，Phaser 会静默忽略不存在的文件，无需手动维护 |
-| AutoBot 通关率（2026-04-24） | A 组 ✓248/301（82%）；B 组 ✓144/167（86%）。卡关原因：不可达颜色车占满轨道+buffer，可达颜色车被锁在队列——需要道具或颜色依赖图策略。bufferDanger 预测机制已将 A 组失败率从 71 降至 0（纯卡关） |
-| L285/L289 空关文件 | 两关 PixelImageData.pixels 为空数组，导致 bot 无法结束关卡（state 永远 playing），属关卡文件问题 |
+| AutoBot 通关率（2026-04-25） | A 组 ✓259/299（86.6%）；B 组 ✓154/171（90.1%）。卡关原因：不可达颜色车占满轨道+buffer，可达颜色车被锁在队列——需要道具或颜色依赖图策略。bufferDanger 预测机制已将失败率降至 0（纯卡关） |
+| A 组空关已清理 | 原 level285/level289 为空关（boardSize=0），已删除，后续关卡顺位前移，A 组共 299 关 |
