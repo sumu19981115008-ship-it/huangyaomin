@@ -29,14 +29,13 @@ export class DevTools {
 
   _build() {
     const VW = this._scene.scale.width;
-    const VH = this._scene.scale.height;
 
-    // 触发按钮移到左下角，不与右上角工具栏冲突
-    const btn = this._scene.add.text(8, VH - 8, '[DEV]', {
-      fontSize: '11px', fontFamily: 'monospace',
-      color: '#ff4444', backgroundColor: '#00000088',
-      padding: { x: 4, y: 2 },
-    }).setOrigin(0, 1).setDepth(100).setInteractive({ useHandCursor: true });
+    // DEV 触发按钮放右上角工具栏同行，在"🤖 自动"左侧
+    const btn = this._scene.add.text(VW - 8 - 82 - 8 - 48, 8, '[DEV]', {
+      fontSize: '12px', fontFamily: 'monospace',
+      color: '#ff4444', backgroundColor: '#00000099',
+      padding: { x: 7, y: 4 },
+    }).setOrigin(1, 0).setDepth(100).setInteractive({ useHandCursor: true });
 
     btn.on('pointerdown', () => this._toggle());
 
@@ -46,7 +45,7 @@ export class DevTools {
 
     // 遮罩：面板关闭时覆盖在 zone 上方，吃掉所有穿透点击
     const panelW = 200, panelH = 240;
-    const mx = VW - panelW - 8, my = 28;
+    const mx = VW - panelW - 8, my = 42;
     this._mask = this._scene.add.zone(mx, my, panelW, panelH)
       .setOrigin(0).setDepth(102).setInteractive();
   }
@@ -54,7 +53,7 @@ export class DevTools {
   _buildPanel() {
     const VW = this._scene.scale.width;
     const panelW = 200, panelH = 240;
-    const px = VW - panelW - 8, py = 28;
+    const px = VW - panelW - 8, py = 42;
 
     // 背景
     const bg = this._scene.add.graphics();
