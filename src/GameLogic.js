@@ -146,6 +146,7 @@ export class GameLogic {
         lane.map(t => new TurretDef(matToColor(t.material), t.ammo))
       );
     }
+
   }
 
   deployFromLane(laneIdx) {
