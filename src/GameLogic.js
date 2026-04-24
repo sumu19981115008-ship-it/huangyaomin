@@ -248,8 +248,10 @@ export class GameLogic {
       }
     }
 
-    // 某色方块刚被消完时，剔除轨道上同色且无飞行子弹的无用炮车
+    // 某色方块刚被消完时，剔除轨道/暂存/队列中同色无用炮车
     this._pruneUselessTurrets();
+    this._pruneUselessBuffer();
+    this._pruneUselessLanes();
   }
 
   // 颜色已从棋盘消失且无飞行子弹（activeShotCount=0）的轨道炮车，直接废弃释放槽位
@@ -266,6 +268,28 @@ export class GameLogic {
       if (idx !== -1) this.turrets.splice(idx, 1);
     }
     if (toRemove.length > 0) this._checkEndgame();
+  }
+
+  // 颜色已从棋盘消失的暂存区炮车，直接丢弃
+  _pruneUselessBuffer() {
+    const aliveColors = new Set(this.blocks.map(b => b.color));
+    const before = this.buffer.length;
+    this.buffer = this.buffer.filter(t => aliveColors.has(t.color));
+    if (this.buffer.length < before) this._checkEndgame();
+  }
+
+  // 颜色已从棋盘消失的队列队首，直接移除（解除阻塞，允许后续有效颜色上车）
+  _pruneUselessLanes() {
+    const aliveColors = new Set(this.blocks.map(b => b.color));
+    let pruned = false;
+    for (const lane of this.lanes) {
+      // 持续移除队首颜色已消失的车，直到队首有效或队列为空
+      while (lane.length > 0 && !aliveColors.has(lane[0].color)) {
+        lane.shift();
+        pruned = true;
+      }
+    }
+    if (pruned) this._checkEndgame();
   }
 
   flushPendingBullets() {
