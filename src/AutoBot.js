@@ -73,8 +73,13 @@ export class AutoBot {
 
     const reachableSet = this._computeReachable();
 
-    // buffer 危险：已有 bufferCap-1 辆，必须腾位，否则下一辆转完就死
-    const bufferDanger = logic.buffer.length >= logic.bufferCap - 1;
+    // buffer 危险预判：当前 buffer 数 + 即将跑完一圈的车数 >= bufferCap
+    // 即将跑完：pathPos 超过 80% 总路程且有剩余弹药（还会进 buffer）
+    const { TOTAL_DIST } = G;
+    const soonDone = logic.turrets.filter(
+      t => !t.lapComplete && t.ammo > 0 && t.pathPos >= TOTAL_DIST * 0.8
+    ).length;
+    const bufferDanger = logic.buffer.length + soonDone >= logic.bufferCap - 1;
     if (bufferDanger) {
       const bufCandidates = candidates.filter(c => c.source === 'buffer');
       if (bufCandidates.length > 0) {
