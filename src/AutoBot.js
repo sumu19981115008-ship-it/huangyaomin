@@ -14,9 +14,10 @@ import { G } from './constants.js';
  */
 export class AutoBot {
   constructor(scene) {
-    this.scene      = scene;
-    this.enabled    = false;
-    this._tickTimer = null;
+    this.scene       = scene;
+    this.enabled     = false;
+    this._tickTimer  = null;
+    this._commitLane = null;
   }
 
   // ── 开关 ──────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ export class AutoBot {
   disable() { if (this.enabled)  { this.enabled = false; this._stop();  } }
 
   reset() {
+    this._commitLane = null;
     if (this.enabled) { this._stop(); this._start(); }
   }
 
@@ -103,32 +105,78 @@ export class AutoBot {
     const trackColorCount = {};
     for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
 
+    const trackUsed  = logic.turrets.length;
+    const trackCap   = logic.trackCap ?? 5;
+    const freeSlots  = trackCap - trackUsed;
+
     const reachPool  = candidates.filter(c => reachableSet.has(c.color));
+
+    // 挖坑承诺：锁定某条队列，持续停车直到队头变为可达色
+    if (this._commitLane && freeSlots >= 1) {
+      const { laneIdx } = this._commitLane;
+      const lane = logic.lanes[laneIdx];
+      if (lane && lane.length > 0) {
+        const head = lane[0];
+        if (!reachableSet.has(head.color) && (colorCount[head.color] ?? 0) > 0
+            && !(trackColorCount[head.color] > 0)) {
+          this._deploy({ source: 'lane', laneIdx, color: head.color, ammo: head.ammo, _unlock: true });
+          return;
+        }
+      }
+      this._commitLane = null;
+    }
+
     const inFallback = reachPool.length === 0;
 
-    // 停车场策略：把阻塞队列的不可达头部送上轨道，换出身后的可达色
-    // 条件：有空余槽，在轨同色=0，后续10步内有可达色（取消 ammo 上限）
+    // 停车场策略：计算每条阻塞队列的挖掘价值（含 dist/gain/cost 指标）
     const unlockPool = [];
-    if (!inFallback) {
-      const trackUsed = logic.turrets.length;
-      const trackCap  = logic.trackCap ?? 5;
-      const freeSlots = trackCap - trackUsed;
-      if (freeSlots > 0) {
-        for (let li = 0; li < logic.lanes.length; li++) {
-          const lane = logic.lanes[li];
-          if (lane.length < 2) continue;
-          const head = lane[0];
-          if (reachableSet.has(head.color)) continue;
-          if ((colorCount[head.color] ?? 0) === 0) continue;
-          if ((trackColorCount[head.color] || 0) > 0) continue;
-          let hasBehind = false;
-          for (let j = 1; j <= Math.min(10, lane.length - 1); j++) {
-            if (reachableSet.has(lane[j].color)) { hasBehind = true; break; }
+    if (freeSlots > 0) {
+      for (let li = 0; li < logic.lanes.length; li++) {
+        const lane = logic.lanes[li];
+        if (lane.length < 2) continue;
+        const head = lane[0];
+        if (reachableSet.has(head.color)) continue;
+        if ((colorCount[head.color] ?? 0) === 0) continue;
+        if ((trackColorCount[head.color] || 0) > 0) continue;
+        let cost = 0, gain = 0, dist = Infinity, targetColor = null;
+        for (let j = 0; j < Math.min(10, lane.length); j++) {
+          const car = lane[j];
+          if (reachableSet.has(car.color)) {
+            gain += car.ammo;
+            if (dist === Infinity) { dist = j; targetColor = car.color; }
+          } else {
+            if (j > 0) cost += car.ammo;
           }
-          if (!hasBehind) continue;
-          unlockPool.push({ source: 'lane', laneIdx: li, color: head.color,
-                            ammo: head.ammo, idle: false, _unlock: true });
         }
+        if (dist === Infinity) continue;
+        unlockPool.push({ source: 'lane', laneIdx: li, color: head.color,
+                          ammo: head.ammo, idle: false, _unlock: true,
+                          _dist: dist, _gain: gain, _cost: cost });
+      }
+    }
+
+    // 主动挖坑：开局全部inFallback时（轨道为空），阈值低（1.2，别无他选）
+    const allEmpty = logic.turrets.length === 0;
+    if (inFallback && allEmpty && freeSlots >= 2 && unlockPool.length > 0) {
+      const worthwhile = unlockPool.filter(u => u._gain > u._cost * 1.2 && u._dist <= 3);
+      if (worthwhile.length > 0) {
+        worthwhile.sort((a, b) => (b._gain - b._cost) - (a._gain - a._cost));
+        const best = worthwhile[0];
+        this._commitLane = { laneIdx: best.laneIdx };
+        this._deploy(best);
+        return;
+      }
+    }
+
+    // inFallback但不是allEmpty时：优先选择1步可达的解锁候选
+    if (inFallback && !allEmpty && freeSlots >= 1) {
+      const nearUnlock = unlockPool.filter(u => u._dist === 1);
+      if (nearUnlock.length > 0) {
+        nearUnlock.sort((a, b) => (b._gain - b._cost) - (a._gain - a._cost));
+        const best = nearUnlock[0];
+        this._commitLane = { laneIdx: best.laneIdx };
+        this._deploy(best);
+        return;
       }
     }
 
@@ -140,11 +188,9 @@ export class AutoBot {
       let score = 1 / (1 + Math.abs(ammoSum - blockCount));
       const onTrack = trackColorCount[c.color] || 0;
       if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-      // 曝光 pathPos 惩罚（弱）：极晚才能打的颜色得分适当下调
       const ep = exposureMap[c.color] ?? TOTAL_DIST;
       score *= 1 / (1 + ep / (TOTAL_DIST * 2));
-      if (inFallback) score *= 1 / (1 + ep / TOTAL_DIST); // 兜底时双倍惩罚
-      // 解锁候选降权（部署后不能立即打块，只解锁队列）
+      if (inFallback) score *= 1 / (1 + ep / TOTAL_DIST);
       if (c._unlock) score *= 0.6 * (1 / (1 + c.ammo / 20));
       c.score = score;
     }
@@ -157,6 +203,7 @@ export class AutoBot {
       return 0;
     });
 
+    this._commitLane = null;
     this._deploy(pool[0]);
   }
 

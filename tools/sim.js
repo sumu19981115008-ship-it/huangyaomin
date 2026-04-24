@@ -73,6 +73,9 @@ function simulate(data) {
   let frames      = 0;
   let deployCount = 0;
 
+  // 挖坑承诺：一旦开始停某条队列，锁定直到目标颜色到达队头
+  let commitLane = null;
+
   // 在途子弹队列：{ landFrame, turretId, col, row }
   const inFlight = [];
 
@@ -97,10 +100,12 @@ function simulate(data) {
       const SAFE_GAP = 28;
       const blocked  = logic.turrets.some(t => !t.lapComplete && t.pathPos < SAFE_GAP);
       if (!blocked) {
-        const candidate = pickCandidate(logic);
+        const candidate = pickCandidate(logic, commitLane);
         if (candidate) {
           deploy(logic, candidate);
           deployCount++;
+          // 更新承诺状态
+          if (candidate._commitLane !== undefined) commitLane = candidate._commitLane;
         }
       }
     }
@@ -188,7 +193,7 @@ function computeColorExposurePathPos(logic) {
 }
 
 
-function pickCandidate(logic) {
+function pickCandidate(logic, commitLane) {
   const colorCount = countColors(logic);
   const candidates = [];
 
@@ -236,17 +241,38 @@ function pickCandidate(logic) {
   for (const t of logic.buffer) colorAmmo[t.color] = (colorAmmo[t.color] ?? 0) + t.ammo;
 
   const reachPool  = candidates.filter(c => reachable.has(c.color));
-  const inFallback = reachPool.length === 0;
   const norm = TOTAL_DIST;
 
   const trackUsed  = logic.turrets.length;
   const trackCap   = logic.trackCap ?? 5;
   const freeSlots  = trackCap - trackUsed;
 
-  // 停车场策略（评分竞争）：把阻塞队列的不可达头部加入候选池
-  // 触发条件：freeSlots > 0 且后续10步内有可达色
+  // 挖坑承诺：锁定某条队列，持续停车直到队头变为可达色
+  if (commitLane && freeSlots >= 1) {
+    const { laneIdx } = commitLane;
+    const lane = logic.lanes[laneIdx];
+    if (lane && lane.length > 0) {
+      const head = lane[0];
+      const headReachable = reachable.has(head.color);
+      const headUseful    = (colorCount[head.color] ?? 0) > 0;
+      const headOnTrack   = (trackColorCount[head.color] || 0) > 0;
+      if (!headReachable && headUseful && !headOnTrack) {
+        // 队头仍是不可达色，继续挖
+        return { source: 'lane', laneIdx, color: head.color, ammo: head.ammo,
+                 _unlock: true, _commitLane: commitLane };
+      }
+      // 队头已是可达色（或无需停），承诺自然结束，fall through 正常评分
+    }
+    // 承诺的队列已空或条件不满足，清除承诺
+    // _commitLane = null 在下面的 chosen 赋值处处理
+  }
+
+  const inFallback = reachPool.length === 0;
+
+  // 停车场策略：计算每条阻塞队列的"挖掘价值"
+  // 价值 = 挖通后可获得的所有可达色弹药总和 - 需要停车的弹药成本
   const unlockPool = [];
-  if (!inFallback && freeSlots > 0) {
+  if (freeSlots > 0) {
     for (let li = 0; li < logic.lanes.length; li++) {
       const lane = logic.lanes[li];
       if (lane.length < 2) continue;
@@ -254,13 +280,45 @@ function pickCandidate(logic) {
       if (reachable.has(head.color)) continue;
       if ((colorCount[head.color] ?? 0) === 0) continue;
       if ((trackColorCount[head.color] || 0) > 0) continue;
-      let hasBehind = false;
-      for (let j = 1; j <= Math.min(10, lane.length - 1); j++) {
-        if (reachable.has(lane[j].color)) { hasBehind = true; break; }
+      // 扫描队列：统计需要停车的弹药成本，以及能挖出的可达色弹药收益
+      let cost = 0, gain = 0, dist = Infinity, targetColor = null;
+      for (let j = 0; j < Math.min(10, lane.length); j++) {
+        const car = lane[j];
+        if (reachable.has(car.color)) {
+          gain += car.ammo;
+          if (dist === Infinity) { dist = j; targetColor = car.color; }
+        } else {
+          if (j > 0) cost += car.ammo; // j=0 是当前头部（即将停的这辆），单独计
+        }
       }
-      if (!hasBehind) continue;
+      if (dist === Infinity) continue;
       unlockPool.push({ source: 'lane', laneIdx: li, color: head.color,
-                        ammo: head.ammo, idle: false, _unlock: true });
+                        ammo: head.ammo, idle: false, _unlock: true,
+                        _dist: dist, _targetColor: targetColor,
+                        _gain: gain, _cost: cost });
+    }
+  }
+
+  // 主动挖坑：开局全部inFallback时（轨道为空），阈值低（1.2，别无他选）
+  const allEmpty = logic.turrets.length === 0;
+  if (inFallback && allEmpty && freeSlots >= 2 && unlockPool.length > 0) {
+    const worthwhile = unlockPool.filter(u => u._gain > u._cost * 1.2 && u._dist <= 3);
+    if (worthwhile.length > 0) {
+      worthwhile.sort((a, b) => (b._gain - b._cost) - (a._gain - a._cost));
+      const best = worthwhile[0];
+      best._commitLane = { laneIdx: best.laneIdx };
+      return best;
+    }
+  }
+
+  // inFallback但不是allEmpty时：优先选择1步可达的解锁候选
+  if (inFallback && !allEmpty && freeSlots >= 1) {
+    const nearUnlock = unlockPool.filter(u => u._dist === 1);
+    if (nearUnlock.length > 0) {
+      nearUnlock.sort((a, b) => (b._gain - b._cost) - (a._gain - a._cost));
+      const best = nearUnlock[0];
+      best._commitLane = { laneIdx: best.laneIdx };
+      return best;
     }
   }
 
@@ -274,9 +332,7 @@ function pickCandidate(logic) {
     const ep = exposureMap[c.color] ?? norm;
     score *= 1 / (1 + ep / (norm * 2));
     if (inFallback) score *= 1 / (1 + ep / norm);
-    if (c._unlock) {
-      score *= 0.6 * (1 / (1 + c.ammo / 20));
-    }
+    if (c._unlock) score *= 0.6 * (1 / (1 + c.ammo / 20));
     c.score = score;
   }
   use.sort((a, b) => {
@@ -286,7 +342,10 @@ function pickCandidate(logic) {
     if (b.source === 'buffer' && a.source !== 'buffer') return  1;
     return 0;
   });
-  return use[0];
+
+  const chosen = use[0];
+  chosen._commitLane = null;
+  return chosen;
 }
 
 function deploy(logic, c) {
