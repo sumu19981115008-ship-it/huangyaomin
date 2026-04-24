@@ -414,13 +414,22 @@ export class GameLogic {
         this.speedMult = Math.min(2.4, this.speedMult * 1.2);
         return;
       }
-      if (this.buffer.length >= this.bufferCap) {
-        this.state      = 'fail';
-        this.failReason = 'ON_STAGE_FULL';
-        return;
-      }
       t.idleLastLap = (t.hitsThisLap === 0);
       t.hitsThisLap = 0;
+      if (this.buffer.length >= this.bufferCap) {
+        // buffer 满时尝试淘汰一辆"连续空转且颜色不可达"的旧车为新车腾位
+        const aliveColors = new Set(this.blocks.map(b => b.color));
+        const evictIdx = this.buffer.findIndex(b => b.idleLastLap && !aliveColors.has(b.color));
+        // 注意：aliveColors 包含所有存在的颜色，不可达只能在 bot 层判断；
+        // 此处仅淘汰颜色已从棋盘消失（_pruneUselessBuffer 应已清掉，双保险）的 idle 车
+        if (evictIdx !== -1) {
+          this.buffer.splice(evictIdx, 1);
+        } else {
+          this.state      = 'fail';
+          this.failReason = 'ON_STAGE_FULL';
+          return;
+        }
+      }
       this.buffer.push(t);
     }
     this._checkEndgame();

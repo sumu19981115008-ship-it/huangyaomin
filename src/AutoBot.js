@@ -67,31 +67,46 @@ export class AutoBot {
     const SAFE_GAP = 28;
     if (logic.turrets.some(t => !t.lapComplete && t.pathPos < SAFE_GAP)) return;
 
-    const colorCount = this._countColors();
-    const candidates = this._gatherCandidates(colorCount);
+    const colorCount   = this._countColors();
+    const candidates   = this._gatherCandidates(colorCount);
     if (candidates.length === 0) return;
 
-    // 当前棋盘最外层暴露的颜色（严格只看第一格，不穿透）
     const reachableSet = this._computeReachable();
 
-    // 按颜色聚合弹药总和
+    // buffer 危险：已有 bufferCap-1 辆，必须腾位，否则下一辆转完就死
+    const bufferDanger = logic.buffer.length >= logic.bufferCap - 1;
+    if (bufferDanger) {
+      const bufCandidates = candidates.filter(c => c.source === 'buffer');
+      if (bufCandidates.length > 0) {
+        const reachBuf  = bufCandidates.filter(c => reachableSet.has(c.color));
+        const freshBuf  = bufCandidates.filter(c => !c.idle);  // 未空转过的优先
+        // 优선顺序：可达且未空转 > 可达 > 未空转 > 全量
+        const pick =
+          reachBuf.filter(c => !c.idle).length > 0 ? reachBuf.filter(c => !c.idle) :
+          reachBuf.length > 0                       ? reachBuf :
+          freshBuf.length > 0                       ? freshBuf :
+          bufCandidates;
+        pick.sort((a, b) => a.ammo - b.ammo);
+        this._deploy(pick[0]);
+        return;
+      }
+    }
+
+    // 正常决策：按颜色聚合弹药总和，评分选最优
     const colorAmmo = {};
     for (const c of candidates) {
       colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
     }
 
-    // 只保留颜色当前可达的候选；若全不可达则全部保留（避免死锁，让 idleLastLap 机制兜底）
     const reachable = candidates.filter(c => reachableSet.has(c.color));
     const pool      = reachable.length > 0 ? reachable : candidates;
 
-    // 评分：弹药总和与方块数差值越小越好
     for (const c of pool) {
       const blockCount = colorCount[c.color] ?? 0;
       const ammoSum    = colorAmmo[c.color]  ?? 0;
       c.score = 1 / (1 + Math.abs(ammoSum - blockCount));
     }
 
-    // 排序：分数降序，同分 buffer 优先
     pool.sort((a, b) => {
       const ds = b.score - a.score;
       if (Math.abs(ds) > 1e-9) return ds;

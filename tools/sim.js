@@ -32,18 +32,67 @@ const toIdx   = parseInt(toStr)   - 1;
 const MAX_FRAMES  = 200_000;  // 防无限循环
 const TURRET_SPEED = 3;       // 与 constants.js 一致
 
+// 计算子弹从炮车位置到目标格的像素距离，从而推算飞行帧数
+// 炮车在轨道边缘外侧，子弹沿垂直方向射入画布
+function bulletFlightFrames(bullet) {
+  const { CELL, CANVAS_X, CANVAS_Y, GW, GH, CW, CH,
+          LEN_BOTTOM, LEN_RIGHT, LEN_TOP } = G;
+  const { col, row, fromPathPos } = bullet;
+  const BULLET_SPEED = 14;
+
+  // 目标格中心坐标
+  const targetX = CANVAS_X + col * CELL + CELL / 2;
+  const targetY = CANVAS_Y + row * CELL + CELL / 2;
+
+  // 炮车在轨道上的屏幕坐标（轨道在画布外侧 TRACK_GAP=22 处）
+  const TRACK_GAP = 22;
+  let sx, sy;
+  const p = fromPathPos;
+  if (p < LEN_BOTTOM) {
+    sx = CANVAS_X + p;
+    sy = CANVAS_Y + CH + TRACK_GAP;
+  } else if (p < LEN_BOTTOM + LEN_RIGHT) {
+    sx = CANVAS_X + CW + TRACK_GAP;
+    sy = CANVAS_Y + CH - (p - LEN_BOTTOM);
+  } else if (p < LEN_BOTTOM + LEN_RIGHT + LEN_TOP) {
+    sx = CANVAS_X + CW - (p - LEN_BOTTOM - LEN_RIGHT);
+    sy = CANVAS_Y - TRACK_GAP;
+  } else {
+    sx = CANVAS_X - TRACK_GAP;
+    sy = CANVAS_Y + (p - LEN_BOTTOM - LEN_RIGHT - LEN_TOP);
+  }
+
+  const dist = Math.sqrt((targetX - sx) ** 2 + (targetY - sy) ** 2);
+  return Math.max(1, Math.round(dist / BULLET_SPEED));
+}
+
 function simulate(data) {
   const logic = new GameLogic();
   logic.loadLevel(data);
 
   let frames      = 0;
-  let pruneCount  = 0;
   let deployCount = 0;
+
+  // 在途子弹队列：{ landFrame, turretId, col, row }
+  const inFlight = [];
 
   while (logic.state === 'playing' && frames < MAX_FRAMES) {
     frames++;
 
-    // 1. Bot 决策：尝试部署一辆车
+    // 1. 处理本帧到达的子弹
+    let i = 0;
+    while (i < inFlight.length) {
+      if (inFlight[i].landFrame <= frames) {
+        const b = inFlight.splice(i, 1)[0];
+        logic.onBulletHit(b.turretId, b.col, b.row);
+        if (logic.state !== 'playing') break;
+      } else {
+        i++;
+      }
+    }
+    if (logic.state !== 'playing') break;
+
+    // 2. Bot 决策：尝试部署一辆车
     if (!logic.isTrackFull()) {
       const SAFE_GAP = 28;
       const blocked  = logic.turrets.some(t => !t.lapComplete && t.pathPos < SAFE_GAP);
@@ -56,18 +105,12 @@ function simulate(data) {
       }
     }
 
-    // 2. 炮车移动 + 子弹生成
+    // 3. 炮车移动 + 生成新子弹（加入飞行队列，延迟命中）
     logic.update();
-
-    // 3. 子弹瞬间命中（跳过飞行动画）
-    const bullets = logic.flushPendingBullets();
-    for (const b of bullets) {
-      logic.onBulletHit(b.turretId, b.col, b.row);
-      if (logic.state !== 'playing') break;
+    for (const b of logic.flushPendingBullets()) {
+      const delay = bulletFlightFrames(b);
+      inFlight.push({ landFrame: frames + delay, ...b });
     }
-
-    // 检测无用车剔除（通过 turrets 长度变化间接统计）
-    // _pruneUselessTurrets 内置在 onBulletHit 里，无需额外调用
   }
 
   const stuck = frames >= MAX_FRAMES;
@@ -121,12 +164,30 @@ function pickCandidate(logic) {
   }
   if (!candidates.length) return null;
 
-  const reachable  = computeReachable(logic);
-  const colorAmmo  = {};
+  const reachable = computeReachable(logic);
+
+  // buffer 危险：已有 bufferCap-1 辆，必须腾位，否则下一辆转完就死
+  const bufferDanger = logic.buffer.length >= logic.bufferCap - 1;
+  if (bufferDanger) {
+    const bufCandidates = candidates.filter(c => c.source === 'buffer');
+    if (bufCandidates.length > 0) {
+      const reachBuf = bufCandidates.filter(c => reachable.has(c.color));
+      const freshBuf = bufCandidates.filter(c => !c.idle);
+      const pick =
+        reachBuf.filter(c => !c.idle).length > 0 ? reachBuf.filter(c => !c.idle) :
+        reachBuf.length > 0                       ? reachBuf :
+        freshBuf.length > 0                       ? freshBuf :
+        bufCandidates;
+      pick.sort((a, b) => a.ammo - b.ammo);
+      return pick[0];
+    }
+  }
+
+  const colorAmmo = {};
   for (const c of candidates) colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
 
-  const pool = candidates.filter(c => reachable.has(c.color));
-  const use  = pool.length > 0 ? pool : candidates;
+  const reachPool = candidates.filter(c => reachable.has(c.color));
+  const use = reachPool.length > 0 ? reachPool : candidates;
 
   for (const c of use) {
     const blockCount = colorCount[c.color] ?? 0;
