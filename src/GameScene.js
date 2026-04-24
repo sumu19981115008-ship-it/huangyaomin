@@ -44,7 +44,7 @@ export class GameScene extends Phaser.Scene {
     this.txQueueCounts = [];
     this.txBufferLabel = null;
     this.txQueueLabel  = null;
-    this.txGroupBtn    = null;   // A/B 切换按钮文本
+    this._groupSelect  = null;   // 关卡组下拉框（HTML select）
 
     this._endgameDeployDone = false;
   }
@@ -144,13 +144,56 @@ export class GameScene extends Phaser.Scene {
     return this.levels;
   }
 
-  _switchGroup() {
-    if (this.group === 'A')      this.group = 'B';
-    else if (this.group === 'B') this.group = 'C';
-    else                         this.group = 'A';
+  _buildGroupSelect(VW) {
+    const canvas = this.sys.game.canvas;
+    const rect   = canvas.getBoundingClientRect();
+    const scaleX = rect.width  / this.scale.width;
+    const scaleY = rect.height / this.scale.height;
+    const btnH   = 26;  // 工具栏按钮高度
+    const selW   = 90;
+    const selH   = btnH;
+    const rightPx = rect.right - 8 * scaleX;
+
+    const sel = document.createElement('select');
+    sel.style.cssText = [
+      `position:fixed`,
+      `right:8px`,
+      `top:${rect.top + 8 * scaleY}px`,
+      `width:${selW}px`,
+      `height:${selH}px`,
+      `font-size:12px`,
+      `font-family:monospace`,
+      `background:#001122`,
+      `color:#aaddff`,
+      `border:1px solid #446688`,
+      `border-radius:4px`,
+      `padding:0 4px`,
+      `z-index:9999`,
+      `cursor:pointer`,
+    ].join(';');
+
+    [['A', 'A 组（299关）'], ['B', 'B 组（171关）'], ['C', 'C 组']].forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    });
+    sel.value = this.group;
+
+    sel.addEventListener('change', () => {
+      if (sel.value !== this.group) this._switchGroup(sel.value);
+    });
+
+    document.body.appendChild(sel);
+    this._groupSelect = sel;
+  }
+
+  _switchGroup(target) {
+    this.group = target ?? (
+      this.group === 'A' ? 'B' : this.group === 'B' ? 'C' : 'A'
+    );
+    if (this._groupSelect) this._groupSelect.value = this.group;
     this.levelIndex = 0;
-    const labels = { A: '切换 B 组', B: '切换 C 组', C: '切换 A 组' };
-    this.txGroupBtn.setText(labels[this.group]);
     this.devTools?.setTotalLevels(this._currentLevels().length);
     this._loadCurrentLevel();
   }
@@ -311,14 +354,11 @@ export class GameScene extends Phaser.Scene {
       return tx;
     };
 
-    // 切换关卡组按钮（最右）
-    this.txGroupBtn = _btn(VW - 8, '切换 B 组', '#aaddff', (ev) => {
-      if (ev === 'down') this._switchGroup();
-      else this.txGroupBtn.setColor('#aaddff');
-    });
+    // 关卡组下拉框（HTML select，固定在右上角）
+    this._buildGroupSelect(VW);
 
-    // 自动打关按钮（切换组左侧，固定偏移 82px）
-    this.txAutoBtn = _btn(VW - 8 - 82, '🤖 自动', '#aaffaa', (ev, tx) => {
+    // 自动打关按钮（下拉框左侧）
+    this.txAutoBtn = _btn(VW - 8 - 80, '🤖 自动', '#aaffaa', (ev, tx) => {
       if (ev === 'down') {
         const on = this.bot.toggle();
         tx.setText(on ? '▶ 自动ON' : '🤖 自动').setColor(on ? '#ffdd44' : '#aaffaa');
