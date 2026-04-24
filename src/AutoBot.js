@@ -98,13 +98,20 @@ export class AutoBot {
       colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
     }
 
+    // 轨道颜色多样性：轨道上已有同色车则评分打折，避免单色占轨导致不可达车无法进入
+    const trackColorCount = {};
+    for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
+
     const reachable = candidates.filter(c => reachableSet.has(c.color));
     const pool      = reachable.length > 0 ? reachable : candidates;
 
     for (const c of pool) {
       const blockCount = colorCount[c.color] ?? 0;
       const ammoSum    = colorAmmo[c.color]  ?? 0;
-      c.score = 1 / (1 + Math.abs(ammoSum - blockCount));
+      let score = 1 / (1 + Math.abs(ammoSum - blockCount));
+      const onTrack = trackColorCount[c.color] || 0;
+      if (onTrack > 0) score *= Math.pow(0.6, onTrack); // 同色每多一辆打 0.6 折
+      c.score = score;
     }
 
     pool.sort((a, b) => {

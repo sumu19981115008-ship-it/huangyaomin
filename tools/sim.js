@@ -185,13 +185,20 @@ function pickCandidate(logic) {
   const colorAmmo = {};
   for (const c of candidates) colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
 
+  // 轨道颜色多样性：轨道上已有同色车则评分打折，避免单色占轨导致不可达车无法进入
+  const trackColorCount = {};
+  for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
+
   const reachPool = candidates.filter(c => reachable.has(c.color));
   const use = reachPool.length > 0 ? reachPool : candidates;
 
   for (const c of use) {
     const blockCount = colorCount[c.color] ?? 0;
     const ammoSum    = colorAmmo[c.color]  ?? 0;
-    c.score = 1 / (1 + Math.abs(ammoSum - blockCount));
+    let score = 1 / (1 + Math.abs(ammoSum - blockCount));
+    const onTrack = trackColorCount[c.color] || 0;
+    if (onTrack > 0) score *= Math.pow(0.6, onTrack); // 同色每多一辆打 0.6 折
+    c.score = score;
   }
   use.sort((a, b) => {
     const ds = b.score - a.score;
