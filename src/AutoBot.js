@@ -198,7 +198,7 @@ export class AutoBot {
       } else {
         const u       = urgency[c.color] ?? 0;
         const blocks  = colorCount[c.color] ?? 0;
-        const ammo    = colorAmmo[c.color]  ?? 0;
+        const ammo    = colorAmmo[c.color]  ?? c.ammo;
         const ammoFit = 1 / (1 + Math.abs(ammo - blocks));
         const ep      = exposureMap[c.color] ?? TOTAL_DIST;
         score = u * ammoFit * (1 / (1 + ep / (TOTAL_DIST * 2)));

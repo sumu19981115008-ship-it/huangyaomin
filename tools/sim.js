@@ -336,7 +336,7 @@ function v10Score(c, urgency, colorCount, colorAmmo, exposureMap, inFallback) {
     const tAmmo    = colorAmmo[targetColor]  ?? 0;
     const ammoFit  = 1 / (1 + Math.abs(tAmmo - tBlocks));
     // 融合urgency与ammoFit，再按停车成本/距离降权
-    return 0.6 * tUrgency * ammoFit * (1 / (1 + c._cost / 20));
+    return 0.6 * tUrgency * ammoFit * (1 / (1 + (c._cost ?? 0) / 20));
   }
 
   // 可达色：urgency替换旧的ammoFit分母，保留exposureMap位置权重
