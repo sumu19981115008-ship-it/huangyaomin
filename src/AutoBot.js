@@ -106,12 +106,14 @@ export class AutoBot {
     const reachPool  = candidates.filter(c => reachableSet.has(c.color));
     const inFallback = reachPool.length === 0;
 
-    // 轨道有余量时，把「阻塞队列的不可达头部」加入候选（条件：在轨同色=0，弹药<=20，后续有可达色）
+    // 停车场策略：把阻塞队列的不可达头部送上轨道，换出身后的可达色
+    // 条件：有空余槽，在轨同色=0，后续10步内有可达色（取消 ammo 上限）
     const unlockPool = [];
     if (!inFallback) {
       const trackUsed = logic.turrets.length;
       const trackCap  = logic.trackCap ?? 5;
-      if (trackUsed <= trackCap - 2) {
+      const freeSlots = trackCap - trackUsed;
+      if (freeSlots > 0) {
         for (let li = 0; li < logic.lanes.length; li++) {
           const lane = logic.lanes[li];
           if (lane.length < 2) continue;
@@ -119,9 +121,8 @@ export class AutoBot {
           if (reachableSet.has(head.color)) continue;
           if ((colorCount[head.color] ?? 0) === 0) continue;
           if ((trackColorCount[head.color] || 0) > 0) continue;
-          if (head.ammo > 20) continue;
           let hasBehind = false;
-          for (let j = 1; j <= Math.min(5, lane.length - 1); j++) {
+          for (let j = 1; j <= Math.min(10, lane.length - 1); j++) {
             if (reachableSet.has(lane[j].color)) { hasBehind = true; break; }
           }
           if (!hasBehind) continue;

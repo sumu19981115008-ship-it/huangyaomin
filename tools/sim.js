@@ -239,12 +239,14 @@ function pickCandidate(logic) {
   const inFallback = reachPool.length === 0;
   const norm = TOTAL_DIST;
 
-  // 轨道有余量时，把「阻塞队列的不可达头部」也加入候选池
-  // 条件：在轨数 <= trackCap-2，弹药<=20，在轨同色=0，后续5步内有可达色
-  const trackUsed = logic.turrets.length;
-  const trackCap  = logic.trackCap ?? 5;
+  const trackUsed  = logic.turrets.length;
+  const trackCap   = logic.trackCap ?? 5;
+  const freeSlots  = trackCap - trackUsed;
+
+  // 停车场策略（评分竞争）：把阻塞队列的不可达头部加入候选池
+  // 触发条件：freeSlots > 0 且后续10步内有可达色
   const unlockPool = [];
-  if (!inFallback && trackUsed <= trackCap - 2) {
+  if (!inFallback && freeSlots > 0) {
     for (let li = 0; li < logic.lanes.length; li++) {
       const lane = logic.lanes[li];
       if (lane.length < 2) continue;
@@ -252,10 +254,8 @@ function pickCandidate(logic) {
       if (reachable.has(head.color)) continue;
       if ((colorCount[head.color] ?? 0) === 0) continue;
       if ((trackColorCount[head.color] || 0) > 0) continue;
-      if (head.ammo > 20) continue;
-      // 后续5步内有可达色
       let hasBehind = false;
-      for (let j = 1; j <= Math.min(5, lane.length - 1); j++) {
+      for (let j = 1; j <= Math.min(10, lane.length - 1); j++) {
         if (reachable.has(lane[j].color)) { hasBehind = true; break; }
       }
       if (!hasBehind) continue;
@@ -271,11 +271,9 @@ function pickCandidate(logic) {
     let score = 1 / (1 + Math.abs(ammoSum - blockCount));
     const onTrack = trackColorCount[c.color] || 0;
     if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-    // 曝光 pathPos 惩罚：无论是否兜底，极晚才可打的颜色得分下降
-    // 使用弱惩罚（norm*2 归一化），避免影响正常浅层颜色的相对排序
     const ep = exposureMap[c.color] ?? norm;
     score *= 1 / (1 + ep / (norm * 2));
-    // 解锁候选额外降权（因为部署后不能立即打块，只能解锁队列）
+    if (inFallback) score *= 1 / (1 + ep / norm);
     if (c._unlock) {
       score *= 0.6 * (1 / (1 + c.ammo / 20));
     }
