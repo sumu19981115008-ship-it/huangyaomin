@@ -45,7 +45,7 @@ export class DevTools {
     this._buildPanel();
 
     // 遮罩：面板关闭时覆盖在 zone 上方，吃掉所有穿透点击
-    const panelW = 200, panelH = 348;
+    const panelW = 200, panelH = 240;
     const mx = VW - panelW - 8, my = 28;
     this._mask = this._scene.add.zone(mx, my, panelW, panelH)
       .setOrigin(0).setDepth(102).setInteractive();
@@ -53,7 +53,7 @@ export class DevTools {
 
   _buildPanel() {
     const VW = this._scene.scale.width;
-    const panelW = 200, panelH = 348;
+    const panelW = 200, panelH = 240;
     const px = VW - panelW - 8, py = 28;
 
     // 背景
@@ -77,19 +77,12 @@ export class DevTools {
     }).setOrigin(0.5);
     this._panel.add(this._txCurrent);
 
-    // 输入框（用 HTML input 模拟）
-    this._panel.add(
-      this._scene.add.text(px + 12, py + 54, '跳转到关卡：', {
-        fontSize: '11px', fontFamily: 'monospace', color: '#cccccc',
-      })
-    );
-
     // ±1 快捷按钮
-    this._addBtn(px + 12,  py + 74, '◀ 上一关', () => this._jump(this._cur - 1));
-    this._addBtn(px + 108, py + 74, '下一关 ▶', () => this._jump(this._cur + 1));
+    this._addBtn(px + 12,  py + 54, '◀ 上一关', () => this._jump(this._cur - 1));
+    this._addBtn(px + 108, py + 54, '下一关 ▶', () => this._jump(this._cur + 1));
 
-    // 数字跳关按钮（每行5个，最多2行 = 10格 + 分页）
-    this._buildLevelGrid(px + 8, py + 110, panelW - 16);
+    // 跳关下拉框（HTML select 叠加在画布上）
+    this._buildSelect(px + 8, py + 90, panelW - 16);
 
     // 重载当前关
     this._addBtn(px + 12, py + panelH - 64, '🔄 重载本关', () => this._jump(this._cur));
@@ -99,82 +92,56 @@ export class DevTools {
     this._addBtn(px + 108, py + panelH - 36, '🖼 像素工具', () => window.open('/pixel-tool.html', '_blank'), 84);
   }
 
-  _buildLevelGrid(x, y, w) {
-    const COLS = 5;
-    const btnW = Math.floor(w / COLS) - 2;
-    const btnH = 26;
-    const GAP  = 2;
-    const PAGE_SIZE = 10;
+  _buildSelect(x, y, w) {
+    const canvas = this._scene.sys.game.canvas;
+    const rect   = canvas.getBoundingClientRect();
+    const scaleX = rect.width  / this._scene.scale.width;
+    const scaleY = rect.height / this._scene.scale.height;
 
-    this._gridPage = 0;
-    this._gridBtns = [];
+    const sel = document.createElement('select');
+    sel.style.cssText = [
+      `position:fixed`,
+      `left:${rect.left + x * scaleX}px`,
+      `top:${rect.top  + y * scaleY}px`,
+      `width:${w * scaleX}px`,
+      `height:28px`,
+      `font-size:13px`,
+      `font-family:monospace`,
+      `background:#112233`,
+      `color:#aaddff`,
+      `border:1px solid #446688`,
+      `border-radius:4px`,
+      `padding:0 4px`,
+      `z-index:9999`,
+      `display:none`,
+      `cursor:pointer`,
+    ].join(';');
 
-    for (let i = 0; i < PAGE_SIZE; i++) {
-      const col = i % COLS;
-      const row = Math.floor(i / COLS);
-      const bx = x + col * (btnW + GAP);
-      const by = y + row * (btnH + GAP);
+    this._rebuildOptions(sel);
 
-      const bg = this._scene.add.graphics();
-      const tx = this._scene.add.text(bx + btnW / 2, by + btnH / 2, '', {
-        fontSize: '11px', fontFamily: 'monospace', color: '#ffffff',
-      }).setOrigin(0.5).setDepth(101);
+    sel.addEventListener('change', () => {
+      this._jump(parseInt(sel.value, 10));
+    });
 
-      const zone = this._scene.add.zone(bx, by, btnW, btnH)
-        .setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(101);
-
-      const idx = i;
-      zone.on('pointerdown', () => {
-        const lvl = this._gridPage * PAGE_SIZE + idx;
-        if (lvl < this._totalLevels) this._jump(lvl);
-      });
-
-      this._panel.add([bg, tx]);
-      this._zones.push(zone);
-      this._gridBtns.push({ bg, tx, zone, bx, by, w: btnW, h: btnH });
-    }
-
-    // 翻页按钮
-    const pageY = y + (btnH + GAP) * 2 + 6;
-    this._txPage = this._scene.add.text(x + w / 2, pageY, '', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#888888',
-    }).setOrigin(0.5);
-    this._panel.add(this._txPage);
-
-    this._addBtn(x,         pageY - 2, '«', () => this._changePage(-1), 28);
-    this._addBtn(x + w - 30, pageY - 2, '»', () => this._changePage(+1), 28);
+    document.body.appendChild(sel);
+    this._select = sel;
   }
 
-  _changePage(dir) {
-    const maxPage = Math.ceil(this._totalLevels / 10) - 1;
-    this._gridPage = Math.max(0, Math.min(maxPage, this._gridPage + dir));
-    this._refreshGrid();
+  _rebuildOptions(sel) {
+    sel = sel ?? this._select;
+    if (!sel) return;
+    sel.innerHTML = '';
+    for (let i = 0; i < this._totalLevels; i++) {
+      const opt = document.createElement('option');
+      opt.value       = String(i);
+      opt.textContent = `Level ${i + 1}`;
+      sel.appendChild(opt);
+    }
   }
 
-  _refreshGrid() {
-    const PAGE_SIZE = 10;
-    const offset = this._gridPage * PAGE_SIZE;
-    const maxPage = Math.ceil(this._totalLevels / PAGE_SIZE) - 1;
-    this._txPage?.setText(`第 ${this._gridPage + 1} / ${maxPage + 1} 页`);
-
-    for (let i = 0; i < this._gridBtns.length; i++) {
-      const { bg, tx, bx, by, w, h } = this._gridBtns[i];
-      const lvl = offset + i;
-      const valid = lvl < this._totalLevels;
-      const isCur = lvl === this._cur;
-
-      bg.clear();
-      if (valid) {
-        bg.fillStyle(isCur ? 0x4466ff : 0x223344, 1);
-        bg.fillRoundedRect(bx, by, w, h, 4);
-        tx.setText(String(lvl + 1));
-        tx.setColor(isCur ? '#ffffff' : '#aaaaaa');
-      } else {
-        bg.fillStyle(0x111111, 0.5);
-        bg.fillRoundedRect(bx, by, w, h, 4);
-        tx.setText('');
-      }
-    }
+  _refreshSelect() {
+    if (!this._select) return;
+    this._select.value = String(this._cur ?? 0);
   }
 
   _addBtn(x, y, label, cb, width = 84) {
@@ -215,9 +182,10 @@ export class DevTools {
     // 遮罩：面板关闭时启用（吃掉穿透点击），面板打开时禁用
     if (this._visible) this._mask.disableInteractive();
     else               this._mask.setInteractive();
+    if (this._select) this._select.style.display = this._visible ? 'block' : 'none';
     if (this._visible) {
       this._refreshCurrent(this._cur ?? 0);
-      this._refreshGrid();
+      this._refreshSelect();
     }
   }
 
@@ -226,13 +194,14 @@ export class DevTools {
     this._cur = levelIndex;
     if (this._visible) {
       this._refreshCurrent(levelIndex);
-      this._refreshGrid();
+      this._refreshSelect();
     }
   }
 
   /** 切换关卡组时更新总关卡数 */
   setTotalLevels(n) {
     this._totalLevels = n;
+    this._rebuildOptions();
     this._refreshCurrent(this._cur ?? 0);
   }
 
