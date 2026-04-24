@@ -72,6 +72,7 @@ export class AutoBot {
     if (candidates.length === 0) return;
 
     const reachableSet = this._computeReachable();
+    const exposureMap  = this._computeColorExposurePathPos();
 
     // buffer 危险预判：当前 buffer 数 + 即将跑完一圈的车数 >= bufferCap
     // 即将跑完：pathPos 超过 80% 总路程且有剩余弹药（还会进 buffer）
@@ -102,15 +103,21 @@ export class AutoBot {
     const trackColorCount = {};
     for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
 
-    const reachable = candidates.filter(c => reachableSet.has(c.color));
-    const pool      = reachable.length > 0 ? reachable : candidates;
+    const reachable  = candidates.filter(c => reachableSet.has(c.color));
+    const inFallback = reachable.length === 0;
+    const pool       = inFallback ? candidates : reachable;
 
     for (const c of pool) {
       const blockCount = colorCount[c.color] ?? 0;
       const ammoSum    = colorAmmo[c.color]  ?? 0;
       let score = 1 / (1 + Math.abs(ammoSum - blockCount));
       const onTrack = trackColorCount[c.color] || 0;
-      if (onTrack > 0) score *= Math.pow(0.6, onTrack); // 同色每多一辆打 0.6 折
+      if (onTrack > 0) score *= Math.pow(0.6, onTrack);
+      // 兜底时：曝光越早优先级越高（选最快变可达的颜色，避免深层色占满轨道）
+      if (inFallback) {
+        const ep = exposureMap[c.color] ?? TOTAL_DIST;
+        score *= 1 / (1 + ep / TOTAL_DIST);
+      }
       c.score = score;
     }
 
@@ -203,6 +210,44 @@ export class AutoBot {
       const deployed = logic.deployFromLane(candidate.laneIdx);
       if (deployed) this.scene.bullets.spawnFlash(cx, QUEUE_Y + 60);
     }
+  }
+
+  // 按轨道 pathPos 顺序计算每种颜色的首次暴露位置（越小越早）
+  _computeColorExposurePathPos() {
+    const { GW, GH, LEN_BOTTOM, LEN_RIGHT, LEN_TOP, CELL } = G;
+    const grid = this.scene.logic.grid;
+    const blockExposure = {}; // color -> min pathPos
+
+    const update = (color, pathPos) => {
+      if (!(color in blockExposure) || pathPos < blockExposure[color])
+        blockExposure[color] = pathPos;
+    };
+
+    for (let col = 0; col < GW; col++) {
+      const pp = col * CELL;
+      for (let row = GH - 1; row >= 0; row--) {
+        if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+      }
+    }
+    for (let row = 0; row < GH; row++) {
+      const pp = LEN_BOTTOM + (GH - 1 - row) * CELL;
+      for (let col = GW - 1; col >= 0; col--) {
+        if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+      }
+    }
+    for (let col = 0; col < GW; col++) {
+      const pp = LEN_BOTTOM + LEN_RIGHT + (GW - 1 - col) * CELL;
+      for (let row = 0; row < GH; row++) {
+        if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+      }
+    }
+    for (let row = 0; row < GH; row++) {
+      const pp = LEN_BOTTOM + LEN_RIGHT + LEN_TOP + row * CELL;
+      for (let col = 0; col < GW; col++) {
+        if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+      }
+    }
+    return blockExposure;
   }
 
   // ── 工具 ─────────────────────────────────────────────────────

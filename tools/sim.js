@@ -145,6 +145,48 @@ function computeReachable(logic) {
   return set;
 }
 
+// 按轨道 pathPos 顺序计算每种颜色的首次暴露位置（越小越早）
+function computeColorExposurePathPos(logic) {
+  const { GW, GH, LEN_BOTTOM, LEN_RIGHT, LEN_TOP, CELL } = G;
+  const grid = logic.grid;
+  const blockExposure = {}; // color -> min pathPos across all its blocks
+
+  const update = (color, pathPos) => {
+    if (!(color in blockExposure) || pathPos < blockExposure[color])
+      blockExposure[color] = pathPos;
+  };
+
+  // BOTTOM: 从下往上，每列最底部第一个非空格
+  for (let col = 0; col < GW; col++) {
+    const pp = col * CELL;
+    for (let row = GH - 1; row >= 0; row--) {
+      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+    }
+  }
+  // RIGHT: 从右往左，每行最右边第一个非空格
+  for (let row = 0; row < GH; row++) {
+    const pp = LEN_BOTTOM + (GH - 1 - row) * CELL;
+    for (let col = GW - 1; col >= 0; col--) {
+      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+    }
+  }
+  // TOP: 从上往下，每列最顶部第一个非空格
+  for (let col = 0; col < GW; col++) {
+    const pp = LEN_BOTTOM + LEN_RIGHT + (GW - 1 - col) * CELL;
+    for (let row = 0; row < GH; row++) {
+      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+    }
+  }
+  // LEFT: 从左往右，每行最左边第一个非空格
+  for (let row = 0; row < GH; row++) {
+    const pp = LEN_BOTTOM + LEN_RIGHT + LEN_TOP + row * CELL;
+    for (let col = 0; col < GW; col++) {
+      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
+    }
+  }
+  return blockExposure;
+}
+
 function pickCandidate(logic) {
   const colorCount = countColors(logic);
   const candidates = [];
@@ -164,10 +206,11 @@ function pickCandidate(logic) {
   }
   if (!candidates.length) return null;
 
-  const reachable = computeReachable(logic);
+  const reachable    = computeReachable(logic);
+  const exposureMap  = computeColorExposurePathPos(logic);
+  const { TOTAL_DIST } = G;
 
   // buffer 危险预判：当前 buffer 数 + 即将跑完一圈的车数 >= bufferCap
-  const { TOTAL_DIST } = G;
   const soonDone = logic.turrets.filter(
     t => !t.lapComplete && t.ammo > 0 && t.pathPos >= TOTAL_DIST * 0.8
   ).length;
@@ -185,19 +228,28 @@ function pickCandidate(logic) {
   const colorAmmo = {};
   for (const c of candidates) colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
 
-  // 轨道颜色多样性：轨道上已有同色车则评分打折，避免单色占轨导致不可达车无法进入
+  // 轨道颜色多样性：轨道上已有同色车则评分打折
   const trackColorCount = {};
   for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
 
   const reachPool = candidates.filter(c => reachable.has(c.color));
+  // 当无可达候选时，选曝光 pathPos 最小的（最快会变得可达）
   const use = reachPool.length > 0 ? reachPool : candidates;
+
+  const norm = TOTAL_DIST;
+  const inFallback = reachPool.length === 0; // 全部不可达时走兜底逻辑
 
   for (const c of use) {
     const blockCount = colorCount[c.color] ?? 0;
     const ammoSum    = colorAmmo[c.color]  ?? 0;
     let score = 1 / (1 + Math.abs(ammoSum - blockCount));
     const onTrack = trackColorCount[c.color] || 0;
-    if (onTrack > 0) score *= Math.pow(0.6, onTrack); // 同色每多一辆打 0.6 折
+    if (onTrack > 0) score *= Math.pow(0.6, onTrack);
+    // 兜底时：曝光越早优先级越高（选最快变可达的颜色部署，避免全为深层色占满轨道）
+    if (inFallback) {
+      const ep = exposureMap[c.color] ?? norm;
+      score *= 1 / (1 + ep / norm);
+    }
     c.score = score;
   }
   use.sort((a, b) => {
