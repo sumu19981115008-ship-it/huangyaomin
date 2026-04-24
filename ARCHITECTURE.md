@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-25（DevTools 下拉跳关、关卡组下拉切换、A组清理空关至299关；AutoBot：A组86.6%/B组90.1%）
+> 每次新开发前阅读本文档。最后更新：2026-04-24（AutoBot v10：A组92.6%/B组95.9%，cellDepth容量感知评分框架）
 
 ---
 
@@ -311,6 +311,19 @@ spawnFlash(x, y)   ← 白色扩散圆圈（供 ItemSystem 调用）
 4. **全不可达兜底**：若所有候选颜色均不可达（极端情况），保留全量候选防死锁，由 `idleLastLap` 机制继续过滤
 5. **排序**：score 降序 > buffer 优先于队列
 6. **间距保护**：每次只部署一辆，轨道入口 `pathPos < 28` 范围内有车时等待
+7. **容量感知评分（v10）**：`score = urgency[color] × ammoFit × exposureWeight`
+   - `cellDepth[row][col]` = 该格从四方向看的最小遮挡层数（0=已暴露）
+   - `urgency[color] = Σ 1/(depth+1)`，方块越浅越紧迫
+   - `exposureWeight = 1 / (1 + ep/(TOTAL_DIST×2))`，轨道起点附近的颜色优先
+
+### 停车场策略（v8~v10）
+
+当队列头部颜色不可达时，通过主动"停车"移除挡路车辆解锁后续可达色：
+
+- **unlockPool**：扫描各队列，若队头不可达但队列内有可达色（_dist步内），计算 `_gain`（可达色弹药）、`_cost`（中间不可达车弹药）、`_dist`（距第一个可达色的步数）
+- **allEmpty挖坑**：轨道为空 + 全不可达 + `gain > cost × 1.2` + `dist ≤ 3` → 主动停车挖队列
+- **nearUnlock（v9）**：轨道有车 + 全不可达 + `dist = 1` → 停一步即解锁，直接执行
+- **commitLane**：一旦开始挖某条队列，锁定承诺直到该队列头部变为可达色
 
 ### 无用炮车剔除（GameLogic._pruneUselessTurrets/Buffer/Lanes）
 
@@ -562,5 +575,5 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 | Phaser Zone 交互 | `container.setVisible(false)` 不禁用 Zone，必须用 depth=-1 + 遮罩方案（参见 DevTools） |
 | pixel-tool.html 输出 | 当前仍输出到 levels/ 旧格式，待更新为输出到 levels_a2/（levels2 格式） |
 | C 组上限 500 | TOTAL_LEVELS_C=500 是预加载上限，Phaser 会静默忽略不存在的文件，无需手动维护 |
-| AutoBot 通关率（2026-04-25） | A 组 ✓259/299（86.6%）；B 组 ✓154/171（90.1%）。卡关原因：不可达颜色车占满轨道+buffer，可达颜色车被锁在队列——需要道具或颜色依赖图策略。bufferDanger 预测机制已将失败率降至 0（纯卡关） |
+| AutoBot 通关率（2026-04-24 v10） | A 组 ✓277/299（92.6%）；B 组 ✓164/171（95.9%）。卡关22+7=29关，均为结构性死锁（颜色依赖图问题），零失败 |
 | A 组空关已清理 | 原 level285/level289 为空关（boardSize=0），已删除，后续关卡顺位前移，A 组共 299 关 |
