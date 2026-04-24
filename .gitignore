@@ -4,3 +4,7 @@ LOCAL_URL.txt
 
 # 旧格式关卡备份（不纳入版本管理，游戏不再使用）
 levels_b/
+
+# Python缓存
+__pycache__/
+*.pyc
