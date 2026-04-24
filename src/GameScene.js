@@ -4,6 +4,7 @@ import { BulletSystem } from './bullets.js';
 import { ItemSystem }  from './items.js';
 import { AutoBot }     from './AutoBot.js';
 import { DevTools }    from './dev/DevTools.js';
+import { PlayRecorder } from './dev/PlayRecorder.js';
 import {
   G,
   TRACK_CAP, BUFFER_CAP,
@@ -23,6 +24,7 @@ export class GameScene extends Phaser.Scene {
     this.items      = null;
     this.devTools   = null;
     this.bot        = null;
+    this.recorder   = null;
 
     this.levelIndex = 0;
     this.levels     = [];
@@ -118,6 +120,8 @@ export class GameScene extends Phaser.Scene {
       totalLevels: this._currentLevels().length,
       onJump: (idx) => { this.levelIndex = idx; this._loadCurrentLevel(); },
     });
+
+    this.recorder = new PlayRecorder(this);
 
     this.input.on('pointerdown', (ptr) => this._handleClick(ptr.x, ptr.y));
   }
@@ -237,8 +241,12 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < cap; i++) {
       const sp = this.renderer._bufferSlotPos(i);
       if (Math.abs(px - sp.x) < 26 && Math.abs(py - BUFFER_Y) < 28) {
+        const t        = this.logic.buffer[i];
         const deployed = this.logic.deployFromBuffer(i);
-        if (deployed) this.bullets.spawnFlash(sp.x, BUFFER_Y);
+        if (deployed) {
+          this.bullets.spawnFlash(sp.x, BUFFER_Y);
+          if (t) this.recorder?.onDeploy('buffer', t.color, t.ammo, { idx: i });
+        }
         return;
       }
     }
@@ -248,8 +256,12 @@ export class GameScene extends Phaser.Scene {
       const cx = this.renderer._laneCenterX(i, numLanes);
       const qy = G.QUEUE_Y + (this.items.queueOffsetY || 0);
       if (Math.abs(px - cx) < 50 && py >= qy - 5 && py <= qy + 165) {
+        const t        = this.logic.lanes[i]?.[0];
         const deployed = this.logic.deployFromLane(i);
-        if (deployed) this.bullets.spawnFlash(cx, qy + 60);
+        if (deployed) {
+          this.bullets.spawnFlash(cx, qy + 60);
+          if (t) this.recorder?.onDeploy('lane', t.color, t.ammo, { laneIdx: i });
+        }
         return;
       }
     }
@@ -290,8 +302,8 @@ export class GameScene extends Phaser.Scene {
     const state = this.logic.state;
     if (state !== this._lastState) {
       this._lastState = state;
-      if (state === 'win')  this._showWin();
-      if (state === 'fail') this._showFail();
+      if (state === 'win')  { this._showWin();  this.recorder?.onEnd('win');  }
+      if (state === 'fail') { this._showFail(); this.recorder?.onEnd('fail'); }
     }
   }
 

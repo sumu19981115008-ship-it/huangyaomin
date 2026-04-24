@@ -32,67 +32,18 @@ const toIdx   = parseInt(toStr)   - 1;
 const MAX_FRAMES  = 200_000;  // 防无限循环
 const TURRET_SPEED = 3;       // 与 constants.js 一致
 
-// 计算子弹从炮车位置到目标格的像素距离，从而推算飞行帧数
-// 炮车在轨道边缘外侧，子弹沿垂直方向射入画布
-function bulletFlightFrames(bullet) {
-  const { CELL, CANVAS_X, CANVAS_Y, GW, GH, CW, CH,
-          LEN_BOTTOM, LEN_RIGHT, LEN_TOP } = G;
-  const { col, row, fromPathPos } = bullet;
-  const BULLET_SPEED = 14;
-
-  // 目标格中心坐标
-  const targetX = CANVAS_X + col * CELL + CELL / 2;
-  const targetY = CANVAS_Y + row * CELL + CELL / 2;
-
-  // 炮车在轨道上的屏幕坐标（轨道在画布外侧 TRACK_GAP=22 处）
-  const TRACK_GAP = 22;
-  let sx, sy;
-  const p = fromPathPos;
-  if (p < LEN_BOTTOM) {
-    sx = CANVAS_X + p;
-    sy = CANVAS_Y + CH + TRACK_GAP;
-  } else if (p < LEN_BOTTOM + LEN_RIGHT) {
-    sx = CANVAS_X + CW + TRACK_GAP;
-    sy = CANVAS_Y + CH - (p - LEN_BOTTOM);
-  } else if (p < LEN_BOTTOM + LEN_RIGHT + LEN_TOP) {
-    sx = CANVAS_X + CW - (p - LEN_BOTTOM - LEN_RIGHT);
-    sy = CANVAS_Y - TRACK_GAP;
-  } else {
-    sx = CANVAS_X - TRACK_GAP;
-    sy = CANVAS_Y + (p - LEN_BOTTOM - LEN_RIGHT - LEN_TOP);
-  }
-
-  const dist = Math.sqrt((targetX - sx) ** 2 + (targetY - sy) ** 2);
-  return Math.max(1, Math.round(dist / BULLET_SPEED));
-}
-
 function simulate(data) {
   const logic = new GameLogic();
   logic.loadLevel(data);
 
   let frames      = 0;
+  let pruneCount  = 0;
   let deployCount = 0;
-
-  // 在途子弹队列：{ landFrame, turretId, col, row }
-  const inFlight = [];
 
   while (logic.state === 'playing' && frames < MAX_FRAMES) {
     frames++;
 
-    // 1. 处理本帧到达的子弹
-    let i = 0;
-    while (i < inFlight.length) {
-      if (inFlight[i].landFrame <= frames) {
-        const b = inFlight.splice(i, 1)[0];
-        logic.onBulletHit(b.turretId, b.col, b.row);
-        if (logic.state !== 'playing') break;
-      } else {
-        i++;
-      }
-    }
-    if (logic.state !== 'playing') break;
-
-    // 2. Bot 决策：尝试部署一辆车
+    // 1. Bot 决策：尝试部署一辆车
     if (!logic.isTrackFull()) {
       const SAFE_GAP = 28;
       const blocked  = logic.turrets.some(t => !t.lapComplete && t.pathPos < SAFE_GAP);
@@ -105,12 +56,18 @@ function simulate(data) {
       }
     }
 
-    // 3. 炮车移动 + 生成新子弹（加入飞行队列，延迟命中）
+    // 2. 炮车移动 + 子弹生成
     logic.update();
-    for (const b of logic.flushPendingBullets()) {
-      const delay = bulletFlightFrames(b);
-      inFlight.push({ landFrame: frames + delay, ...b });
+
+    // 3. 子弹瞬间命中（跳过飞行动画）
+    const bullets = logic.flushPendingBullets();
+    for (const b of bullets) {
+      logic.onBulletHit(b.turretId, b.col, b.row);
+      if (logic.state !== 'playing') break;
     }
+
+    // 检测无用车剔除（通过 turrets 长度变化间接统计）
+    // _pruneUselessTurrets 内置在 onBulletHit 里，无需额外调用
   }
 
   const stuck = frames >= MAX_FRAMES;
@@ -145,49 +102,6 @@ function computeReachable(logic) {
   return set;
 }
 
-// 按轨道 pathPos 顺序计算每种颜色的首次暴露位置（越小越早）
-function computeColorExposurePathPos(logic) {
-  const { GW, GH, LEN_BOTTOM, LEN_RIGHT, LEN_TOP, CELL } = G;
-  const grid = logic.grid;
-  const blockExposure = {}; // color -> min pathPos across all its blocks
-
-  const update = (color, pathPos) => {
-    if (!(color in blockExposure) || pathPos < blockExposure[color])
-      blockExposure[color] = pathPos;
-  };
-
-  // BOTTOM: 从下往上，每列最底部第一个非空格
-  for (let col = 0; col < GW; col++) {
-    const pp = col * CELL;
-    for (let row = GH - 1; row >= 0; row--) {
-      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
-    }
-  }
-  // RIGHT: 从右往左，每行最右边第一个非空格
-  for (let row = 0; row < GH; row++) {
-    const pp = LEN_BOTTOM + (GH - 1 - row) * CELL;
-    for (let col = GW - 1; col >= 0; col--) {
-      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
-    }
-  }
-  // TOP: 从上往下，每列最顶部第一个非空格
-  for (let col = 0; col < GW; col++) {
-    const pp = LEN_BOTTOM + LEN_RIGHT + (GW - 1 - col) * CELL;
-    for (let row = 0; row < GH; row++) {
-      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
-    }
-  }
-  // LEFT: 从左往右，每行最左边第一个非空格
-  for (let row = 0; row < GH; row++) {
-    const pp = LEN_BOTTOM + LEN_RIGHT + LEN_TOP + row * CELL;
-    for (let col = 0; col < GW; col++) {
-      if (grid[row]?.[col] != null) { update(grid[row][col], pp); break; }
-    }
-  }
-  return blockExposure;
-}
-
-
 function pickCandidate(logic) {
   const colorCount = countColors(logic);
   const candidates = [];
@@ -207,47 +121,17 @@ function pickCandidate(logic) {
   }
   if (!candidates.length) return null;
 
-  const reachable    = computeReachable(logic);
-  const exposureMap  = computeColorExposurePathPos(logic);
-  const { TOTAL_DIST } = G;
-
-  const trackColorCount = {};
-  for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
-
-  // buffer 危险预判：当前 buffer 数 + 即将跑完一圈的车数 >= bufferCap
-  const soonDone = logic.turrets.filter(
-    t => !t.lapComplete && t.ammo > 0 && t.pathPos >= TOTAL_DIST * 0.8
-  ).length;
-  const bufferDanger = logic.buffer.length + soonDone >= logic.bufferCap - 1;
-  if (bufferDanger) {
-    const bufCandidates = candidates.filter(c => c.source === 'buffer');
-    if (bufCandidates.length > 0) {
-      const reachBuf = bufCandidates.filter(c => reachable.has(c.color));
-      const pool = reachBuf.length > 0 ? reachBuf : bufCandidates;
-      pool.sort((a, b) => a.ammo - b.ammo);
-      return pool[0];
-    }
-  }
-
-  const colorAmmo = {};
+  const reachable  = computeReachable(logic);
+  const colorAmmo  = {};
   for (const c of candidates) colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
 
-  const reachPool  = candidates.filter(c => reachable.has(c.color));
-  const inFallback = reachPool.length === 0;
-  const norm = TOTAL_DIST;
+  const pool = candidates.filter(c => reachable.has(c.color));
+  const use  = pool.length > 0 ? pool : candidates;
 
-  const use = inFallback ? candidates : reachPool;
   for (const c of use) {
     const blockCount = colorCount[c.color] ?? 0;
     const ammoSum    = colorAmmo[c.color]  ?? 0;
-    let score = 1 / (1 + Math.abs(ammoSum - blockCount));
-    const onTrack = trackColorCount[c.color] || 0;
-    if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-    if (inFallback) {
-      const ep = exposureMap[c.color] ?? norm;
-      score *= 1 / (1 + ep / norm);
-    }
-    c.score = score;
+    c.score = 1 / (1 + Math.abs(ammoSum - blockCount));
   }
   use.sort((a, b) => {
     const ds = b.score - a.score;
