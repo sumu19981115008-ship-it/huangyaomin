@@ -183,7 +183,6 @@ export class AutoBot {
     // v10：容量感知评分
     const cellDepth = this._buildCellDepth();
     const urgency   = this._computeUrgency(cellDepth);
-    const { TOTAL_DIST } = G;
 
     const pool = inFallback ? candidates : [...reachPool, ...unlockPool];
 
