@@ -151,7 +151,7 @@ export class AutoBot {
         if (dist === Infinity) continue;
         unlockPool.push({ source: 'lane', laneIdx: li, color: head.color,
                           ammo: head.ammo, idle: false, _unlock: true,
-                          _dist: dist, _gain: gain, _cost: cost });
+                          _dist: dist, _targetColor: targetColor, _gain: gain, _cost: cost });
       }
     }
 
@@ -180,18 +180,33 @@ export class AutoBot {
       }
     }
 
+    // v10：容量感知评分
+    const cellDepth = this._buildCellDepth();
+    const urgency   = this._computeUrgency(cellDepth);
+    const { TOTAL_DIST } = G;
+
     const pool = inFallback ? candidates : [...reachPool, ...unlockPool];
 
     for (const c of pool) {
-      const blockCount = colorCount[c.color] ?? 0;
-      const ammoSum    = colorAmmo[c.color]  ?? 0;
-      let score = 1 / (1 + Math.abs(ammoSum - blockCount));
+      let score;
+      if (c._unlock) {
+        const tColor  = c._targetColor;
+        const tU      = tColor ? (urgency[tColor] ?? 0) : 0;
+        const tBlocks = tColor ? (colorCount[tColor] ?? 1) : 1;
+        const tAmmo   = tColor ? (colorAmmo[tColor] ?? 0) : 0;
+        const ammoFit = 1 / (1 + Math.abs(tAmmo - tBlocks));
+        score = 0.6 * tU * ammoFit * (1 / (1 + (c._cost ?? 0) / 20));
+      } else {
+        const u       = urgency[c.color] ?? 0;
+        const blocks  = colorCount[c.color] ?? 0;
+        const ammo    = colorAmmo[c.color]  ?? 0;
+        const ammoFit = 1 / (1 + Math.abs(ammo - blocks));
+        const ep      = exposureMap[c.color] ?? TOTAL_DIST;
+        score = u * ammoFit * (1 / (1 + ep / (TOTAL_DIST * 2)));
+        if (inFallback) score *= 1 / (1 + ep / TOTAL_DIST);
+      }
       const onTrack = trackColorCount[c.color] || 0;
       if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-      const ep = exposureMap[c.color] ?? TOTAL_DIST;
-      score *= 1 / (1 + ep / (TOTAL_DIST * 2));
-      if (inFallback) score *= 1 / (1 + ep / TOTAL_DIST);
-      if (c._unlock) score *= 0.6 * (1 / (1 + c.ammo / 20));
       c.score = score;
     }
 
@@ -323,6 +338,44 @@ export class AutoBot {
       }
     }
     return blockExposure;
+  }
+
+  // ── v10 深度与紧迫度 ─────────────────────────────────────────
+
+  _buildCellDepth() {
+    const { GW, GH } = G;
+    const grid = this.scene.logic.grid;
+    const d = Array.from({ length: GH }, () => Array(GW).fill(Infinity));
+    for (let col = 0; col < GW; col++) {
+      let k = 0;
+      for (let row = GH - 1; row >= 0; row--)
+        if (grid[row]?.[col] != null) { d[row][col] = Math.min(d[row][col], k); k++; }
+      k = 0;
+      for (let row = 0; row < GH; row++)
+        if (grid[row]?.[col] != null) { d[row][col] = Math.min(d[row][col], k); k++; }
+    }
+    for (let row = 0; row < GH; row++) {
+      let k = 0;
+      for (let col = GW - 1; col >= 0; col--)
+        if (grid[row]?.[col] != null) { d[row][col] = Math.min(d[row][col], k); k++; }
+      k = 0;
+      for (let col = 0; col < GW; col++)
+        if (grid[row]?.[col] != null) { d[row][col] = Math.min(d[row][col], k); k++; }
+    }
+    return d;
+  }
+
+  _computeUrgency(cellDepth) {
+    const { GW, GH } = G;
+    const grid = this.scene.logic.grid;
+    const urgency = {};
+    for (let row = 0; row < GH; row++)
+      for (let col = 0; col < GW; col++) {
+        const color = grid[row]?.[col];
+        if (color == null) continue;
+        urgency[color] = (urgency[color] ?? 0) + 1 / (cellDepth[row][col] + 1);
+      }
+    return urgency;
   }
 
   // ── 工具 ─────────────────────────────────────────────────────

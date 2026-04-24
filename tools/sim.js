@@ -192,6 +192,164 @@ function computeColorExposurePathPos(logic) {
   return blockExposure;
 }
 
+// ── v10 辅助函数 ──────────────────────────────────────────────
+
+/**
+ * 构建每种颜色的最小遮挡深度（四方向扫描）
+ * 返回 { color: minDepth }，depth=0 表示已暴露
+ */
+function buildBlockDepth(logic) {
+  const { GW, GH } = G;
+  const grid = logic.grid;
+  const minDepth = {};
+
+  const update = (color, depth) => {
+    if (!(color in minDepth) || depth < minDepth[color])
+      minDepth[color] = depth;
+  };
+
+  // 从下往上（BOTTOM方向射入），每列扫描
+  for (let col = 0; col < GW; col++) {
+    let depth = 0;
+    for (let row = GH - 1; row >= 0; row--) {
+      if (grid[row]?.[col] != null) {
+        update(grid[row][col], depth);
+        depth++;
+      }
+    }
+  }
+  // 从上往下（TOP方向射入），每列扫描
+  for (let col = 0; col < GW; col++) {
+    let depth = 0;
+    for (let row = 0; row < GH; row++) {
+      if (grid[row]?.[col] != null) {
+        update(grid[row][col], depth);
+        depth++;
+      }
+    }
+  }
+  // 从右往左（RIGHT方向射入），每行扫描
+  for (let row = 0; row < GH; row++) {
+    let depth = 0;
+    for (let col = GW - 1; col >= 0; col--) {
+      if (grid[row]?.[col] != null) {
+        update(grid[row][col], depth);
+        depth++;
+      }
+    }
+  }
+  // 从左往右（LEFT方向射入），每行扫描
+  for (let row = 0; row < GH; row++) {
+    let depth = 0;
+    for (let col = 0; col < GW; col++) {
+      if (grid[row]?.[col] != null) {
+        update(grid[row][col], depth);
+        depth++;
+      }
+    }
+  }
+
+  return minDepth;
+}
+
+/**
+ * 逐格计算四方向最小遮挡深度，返回 cellDepth[row][col]
+ * depth=0 表示该格从某方向直接暴露，depth=k 表示需要先清 k 层其他颜色
+ */
+function buildCellDepth(logic) {
+  const { GW, GH } = G;
+  const grid = logic.grid;
+  const cellDepth = Array.from({ length: GH }, () => Array(GW).fill(Infinity));
+
+  // 从下往上（炮从底部射入）
+  for (let col = 0; col < GW; col++) {
+    let d = 0;
+    for (let row = GH - 1; row >= 0; row--) {
+      if (grid[row]?.[col] != null) { cellDepth[row][col] = Math.min(cellDepth[row][col], d); d++; }
+    }
+  }
+  // 从上往下
+  for (let col = 0; col < GW; col++) {
+    let d = 0;
+    for (let row = 0; row < GH; row++) {
+      if (grid[row]?.[col] != null) { cellDepth[row][col] = Math.min(cellDepth[row][col], d); d++; }
+    }
+  }
+  // 从右往左
+  for (let row = 0; row < GH; row++) {
+    let d = 0;
+    for (let col = GW - 1; col >= 0; col--) {
+      if (grid[row]?.[col] != null) { cellDepth[row][col] = Math.min(cellDepth[row][col], d); d++; }
+    }
+  }
+  // 从左往右
+  for (let row = 0; row < GH; row++) {
+    let d = 0;
+    for (let col = 0; col < GW; col++) {
+      if (grid[row]?.[col] != null) { cellDepth[row][col] = Math.min(cellDepth[row][col], d); d++; }
+    }
+  }
+  return cellDepth;
+}
+
+/**
+ * 基于逐格深度计算每种颜色的"紧迫需求分"
+ * urgency[color] = Σ 1/(cellDepth+1)，对该颜色所有格求和
+ * depth=0（已暴露）贡献 1.0，depth=1 贡献 0.5，depth=k 贡献 1/(k+1)
+ * 颜色方块越多且越浅，urgency 越高
+ */
+function computeUrgency(cellDepth, logic) {
+  const { GW, GH } = G;
+  const grid = logic.grid;
+  const urgency = {};
+  for (let row = 0; row < GH; row++) {
+    for (let col = 0; col < GW; col++) {
+      const color = grid[row]?.[col];
+      if (color == null) continue;
+      const d = cellDepth[row][col];
+      urgency[color] = (urgency[color] ?? 0) + 1 / (d + 1);
+    }
+  }
+  return urgency;
+}
+
+/**
+ * v10 候选车评分
+ *
+ * 可达色候选：
+ *   score = urgency[color] * ammoMatch / (1 + onTrack * 0.5)
+ *   ammoMatch = min(部署弹药, 剩余方块数) / max(部署弹药, 剩余方块数)
+ *              → 弹药和方块数越接近越高
+ *
+ * 停车候选（_unlock）：
+ *   score = (解锁目标urgency * 解锁弹药匹配) / (1 + dist) / (1 + _cost/20)
+ *   再乘以 0.5 降权（停车不直接打块，始终劣于可达色）
+ */
+function v10Score(c, urgency, colorCount, colorAmmo, exposureMap, inFallback) {
+  const { TOTAL_DIST } = G;
+
+  if (c._unlock) {
+    const targetColor = c._targetColor;
+    if (!targetColor) return 0;
+    const tUrgency = urgency[targetColor] ?? 0;
+    const tBlocks  = colorCount[targetColor] ?? 1;
+    const tAmmo    = colorAmmo[targetColor]  ?? 0;
+    const ammoFit  = 1 / (1 + Math.abs(tAmmo - tBlocks));
+    // 融合urgency与ammoFit，再按停车成本/距离降权
+    return 0.6 * tUrgency * ammoFit * (1 / (1 + c._cost / 20));
+  }
+
+  // 可达色：urgency替换旧的ammoFit分母，保留exposureMap位置权重
+  const u       = urgency[c.color] ?? 0;
+  const blocks  = colorCount[c.color] ?? 0;
+  const ammo    = colorAmmo[c.color]  ?? c.ammo;
+  const ammoFit = 1 / (1 + Math.abs(ammo - blocks));
+  const ep      = exposureMap[c.color] ?? TOTAL_DIST;
+  let score     = u * ammoFit * (1 / (1 + ep / (TOTAL_DIST * 2)));
+  if (inFallback) score *= 1 / (1 + ep / TOTAL_DIST);
+  return score;
+}
+
 
 function pickCandidate(logic, commitLane) {
   const colorCount = countColors(logic);
@@ -213,7 +371,6 @@ function pickCandidate(logic, commitLane) {
   if (!candidates.length) return null;
 
   const reachable    = computeReachable(logic);
-  const exposureMap  = computeColorExposurePathPos(logic);
   const { TOTAL_DIST } = G;
 
   const trackColorCount = {};
@@ -241,7 +398,6 @@ function pickCandidate(logic, commitLane) {
   for (const t of logic.buffer) colorAmmo[t.color] = (colorAmmo[t.color] ?? 0) + t.ammo;
 
   const reachPool  = candidates.filter(c => reachable.has(c.color));
-  const norm = TOTAL_DIST;
 
   const trackUsed  = logic.turrets.length;
   const trackCap   = logic.trackCap ?? 5;
@@ -322,22 +478,23 @@ function pickCandidate(logic, commitLane) {
     }
   }
 
+  // ── v10：容量感知评分 ──────────────────────────────────────
+  const cellDepth   = buildCellDepth(logic);
+  const urgency     = computeUrgency(cellDepth, logic);
+  const exposureMap = computeColorExposurePathPos(logic);
+
   const use = inFallback ? candidates : [...reachPool, ...unlockPool];
   for (const c of use) {
-    const blockCount = colorCount[c.color] ?? 0;
-    const ammoSum    = colorAmmo[c.color]  ?? 0;
-    let score = 1 / (1 + Math.abs(ammoSum - blockCount));
+    let score = v10Score(c, urgency, colorCount, colorAmmo, exposureMap, inFallback);
+    // 轨道已有同色车时衰减，避免重复部署
     const onTrack = trackColorCount[c.color] || 0;
     if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-    const ep = exposureMap[c.color] ?? norm;
-    score *= 1 / (1 + ep / (norm * 2));
-    if (inFallback) score *= 1 / (1 + ep / norm);
-    if (c._unlock) score *= 0.6 * (1 / (1 + c.ammo / 20));
     c.score = score;
   }
   use.sort((a, b) => {
     const ds = b.score - a.score;
     if (Math.abs(ds) > 1e-9) return ds;
+    // 同分时优先 buffer（缓解溢出风险）
     if (a.source === 'buffer' && b.source !== 'buffer') return -1;
     if (b.source === 'buffer' && a.source !== 'buffer') return  1;
     return 0;
