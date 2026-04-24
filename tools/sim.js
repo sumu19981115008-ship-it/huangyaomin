@@ -229,23 +229,55 @@ function pickCandidate(logic) {
     }
   }
 
+  // 统计所有待部署弹药（全队列 + buffer）以获得准确的弹药匹配评分
   const colorAmmo = {};
-  for (const c of candidates) colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
+  for (const lane of logic.lanes)
+    for (const t of lane) colorAmmo[t.color] = (colorAmmo[t.color] ?? 0) + t.ammo;
+  for (const t of logic.buffer) colorAmmo[t.color] = (colorAmmo[t.color] ?? 0) + t.ammo;
 
   const reachPool  = candidates.filter(c => reachable.has(c.color));
   const inFallback = reachPool.length === 0;
   const norm = TOTAL_DIST;
 
-  const use = inFallback ? candidates : reachPool;
+  // 轨道有余量时，把「阻塞队列的不可达头部」也加入候选池
+  // 条件：在轨数 <= trackCap-2，弹药<=20，在轨同色=0，后续5步内有可达色
+  const trackUsed = logic.turrets.length;
+  const trackCap  = logic.trackCap ?? 5;
+  const unlockPool = [];
+  if (!inFallback && trackUsed <= trackCap - 2) {
+    for (let li = 0; li < logic.lanes.length; li++) {
+      const lane = logic.lanes[li];
+      if (lane.length < 2) continue;
+      const head = lane[0];
+      if (reachable.has(head.color)) continue;
+      if ((colorCount[head.color] ?? 0) === 0) continue;
+      if ((trackColorCount[head.color] || 0) > 0) continue;
+      if (head.ammo > 20) continue;
+      // 后续5步内有可达色
+      let hasBehind = false;
+      for (let j = 1; j <= Math.min(5, lane.length - 1); j++) {
+        if (reachable.has(lane[j].color)) { hasBehind = true; break; }
+      }
+      if (!hasBehind) continue;
+      unlockPool.push({ source: 'lane', laneIdx: li, color: head.color,
+                        ammo: head.ammo, idle: false, _unlock: true });
+    }
+  }
+
+  const use = inFallback ? candidates : [...reachPool, ...unlockPool];
   for (const c of use) {
     const blockCount = colorCount[c.color] ?? 0;
     const ammoSum    = colorAmmo[c.color]  ?? 0;
     let score = 1 / (1 + Math.abs(ammoSum - blockCount));
     const onTrack = trackColorCount[c.color] || 0;
     if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-    if (inFallback) {
-      const ep = exposureMap[c.color] ?? norm;
-      score *= 1 / (1 + ep / norm);
+    // 曝光 pathPos 惩罚：无论是否兜底，极晚才可打的颜色得分下降
+    // 使用弱惩罚（norm*2 归一化），避免影响正常浅层颜色的相对排序
+    const ep = exposureMap[c.color] ?? norm;
+    score *= 1 / (1 + ep / (norm * 2));
+    // 解锁候选额外降权（因为部署后不能立即打块，只能解锁队列）
+    if (c._unlock) {
+      score *= 0.6 * (1 / (1 + c.ammo / 20));
     }
     c.score = score;
   }

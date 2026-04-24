@@ -93,19 +93,45 @@ export class AutoBot {
       }
     }
 
-    // 正常决策：按颜色聚合弹药总和，评分选最优
+    // 统计所有待部署弹药（全队列 + buffer），用于准确的弹药匹配评分
     const colorAmmo = {};
-    for (const c of candidates) {
-      colorAmmo[c.color] = (colorAmmo[c.color] ?? 0) + c.ammo;
-    }
+    for (const lane of logic.lanes)
+      for (const t of lane) colorAmmo[t.color] = (colorAmmo[t.color] ?? 0) + t.ammo;
+    for (const t of logic.buffer) colorAmmo[t.color] = (colorAmmo[t.color] ?? 0) + t.ammo;
 
-    // 轨道颜色多样性：轨道上已有同色车则评分打折，避免单色占轨导致不可达车无法进入
+    // 轨道颜色多样性：轨道上已有同色车则评分打折
     const trackColorCount = {};
     for (const t of logic.turrets) trackColorCount[t.color] = (trackColorCount[t.color] || 0) + 1;
 
-    const reachable  = candidates.filter(c => reachableSet.has(c.color));
-    const inFallback = reachable.length === 0;
-    const pool       = inFallback ? candidates : reachable;
+    const reachPool  = candidates.filter(c => reachableSet.has(c.color));
+    const inFallback = reachPool.length === 0;
+
+    // 轨道有余量时，把「阻塞队列的不可达头部」加入候选（条件：在轨同色=0，弹药<=20，后续有可达色）
+    const unlockPool = [];
+    if (!inFallback) {
+      const trackUsed = logic.turrets.length;
+      const trackCap  = logic.trackCap ?? 5;
+      if (trackUsed <= trackCap - 2) {
+        for (let li = 0; li < logic.lanes.length; li++) {
+          const lane = logic.lanes[li];
+          if (lane.length < 2) continue;
+          const head = lane[0];
+          if (reachableSet.has(head.color)) continue;
+          if ((colorCount[head.color] ?? 0) === 0) continue;
+          if ((trackColorCount[head.color] || 0) > 0) continue;
+          if (head.ammo > 20) continue;
+          let hasBehind = false;
+          for (let j = 1; j <= Math.min(5, lane.length - 1); j++) {
+            if (reachableSet.has(lane[j].color)) { hasBehind = true; break; }
+          }
+          if (!hasBehind) continue;
+          unlockPool.push({ source: 'lane', laneIdx: li, color: head.color,
+                            ammo: head.ammo, idle: false, _unlock: true });
+        }
+      }
+    }
+
+    const pool = inFallback ? candidates : [...reachPool, ...unlockPool];
 
     for (const c of pool) {
       const blockCount = colorCount[c.color] ?? 0;
@@ -113,11 +139,12 @@ export class AutoBot {
       let score = 1 / (1 + Math.abs(ammoSum - blockCount));
       const onTrack = trackColorCount[c.color] || 0;
       if (onTrack > 0) score *= Math.pow(0.6, onTrack);
-      // 兜底时：曝光越早优先级越高（选最快变可达的颜色，避免深层色占满轨道）
-      if (inFallback) {
-        const ep = exposureMap[c.color] ?? TOTAL_DIST;
-        score *= 1 / (1 + ep / TOTAL_DIST);
-      }
+      // 曝光 pathPos 惩罚（弱）：极晚才能打的颜色得分适当下调
+      const ep = exposureMap[c.color] ?? TOTAL_DIST;
+      score *= 1 / (1 + ep / (TOTAL_DIST * 2));
+      if (inFallback) score *= 1 / (1 + ep / TOTAL_DIST); // 兜底时双倍惩罚
+      // 解锁候选降权（部署后不能立即打块，只解锁队列）
+      if (c._unlock) score *= 0.6 * (1 / (1 + c.ammo / 20));
       c.score = score;
     }
 
