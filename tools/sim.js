@@ -176,14 +176,9 @@ function pickCandidate(logic) {
     const bufCandidates = candidates.filter(c => c.source === 'buffer');
     if (bufCandidates.length > 0) {
       const reachBuf = bufCandidates.filter(c => reachable.has(c.color));
-      const freshBuf = bufCandidates.filter(c => !c.idle);
-      const pick =
-        reachBuf.filter(c => !c.idle).length > 0 ? reachBuf.filter(c => !c.idle) :
-        reachBuf.length > 0                       ? reachBuf :
-        freshBuf.length > 0                       ? freshBuf :
-        bufCandidates;
-      pick.sort((a, b) => a.ammo - b.ammo);
-      return pick[0];
+      const pool = reachBuf.length > 0 ? reachBuf : bufCandidates;
+      pool.sort((a, b) => a.ammo - b.ammo);
+      return pool[0];
     }
   }
 

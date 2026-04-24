@@ -1,6 +1,6 @@
 # FixelFlow 2 — 架构文档
 
-> 每次新开发前阅读本文档。最后更新：2026-04-23（AutoBot 多轮修复：无用炮车剔除、严格可达性、C组预加载修复、队列阻塞修复、全量通关率 72%）
+> 每次新开发前阅读本文档。最后更新：2026-04-24（AutoBot bufferDanger 预测机制：A组82%/B组86%通关率）
 
 ---
 
@@ -560,5 +560,5 @@ python3 tools/level_generator.py <图片> <输出JSON> \
 | Phaser Zone 交互 | `container.setVisible(false)` 不禁用 Zone，必须用 depth=-1 + 遮罩方案（参见 DevTools） |
 | pixel-tool.html 输出 | 当前仍输出到 levels/ 旧格式，待更新为输出到 levels_a2/（levels2 格式） |
 | C 组上限 500 | TOTAL_LEVELS_C=500 是预加载上限，Phaser 会静默忽略不存在的文件，无需手动维护 |
-| AutoBot 通关率 ~72% | A 组 301 关无道具纯 bot：✓217 ✗71（ON_STAGE_FULL） 卡13。失败/卡关原因：不可达颜色车循环占满轨道，可达颜色车被锁在深层队列——需要道具或更复杂的颜色依赖图策略 |
+| AutoBot 通关率（2026-04-24） | A 组 ✓248/301（82%）；B 组 ✓144/167（86%）。卡关原因：不可达颜色车占满轨道+buffer，可达颜色车被锁在队列——需要道具或颜色依赖图策略。bufferDanger 预测机制已将 A 组失败率从 71 降至 0（纯卡关） |
 | L285/L289 空关文件 | 两关 PixelImageData.pixels 为空数组，导致 bot 无法结束关卡（state 永远 playing），属关卡文件问题 |

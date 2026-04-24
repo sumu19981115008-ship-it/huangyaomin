@@ -83,16 +83,11 @@ export class AutoBot {
     if (bufferDanger) {
       const bufCandidates = candidates.filter(c => c.source === 'buffer');
       if (bufCandidates.length > 0) {
-        const reachBuf  = bufCandidates.filter(c => reachableSet.has(c.color));
-        const freshBuf  = bufCandidates.filter(c => !c.idle);  // 未空转过的优先
-        // 优선顺序：可达且未空转 > 可达 > 未空转 > 全量
-        const pick =
-          reachBuf.filter(c => !c.idle).length > 0 ? reachBuf.filter(c => !c.idle) :
-          reachBuf.length > 0                       ? reachBuf :
-          freshBuf.length > 0                       ? freshBuf :
-          bufCandidates;
-        pick.sort((a, b) => a.ammo - b.ammo);
-        this._deploy(pick[0]);
+        const reachBuf = bufCandidates.filter(c => reachableSet.has(c.color));
+        // 危险时首选可达车；若无可达则推弹药最少的车（最快跑完腾槽）
+        const pool = reachBuf.length > 0 ? reachBuf : bufCandidates;
+        pool.sort((a, b) => a.ammo - b.ammo);
+        this._deploy(pool[0]);
         return;
       }
     }
